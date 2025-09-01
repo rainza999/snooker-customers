@@ -1,20 +1,20 @@
-# ---------- Build stage (Alpine) ----------
-FROM golang:1.22-alpine AS build
+# ---------- Build stage (Debian) ----------
+FROM golang:1.22-bookworm AS build
 WORKDIR /src
 COPY ./backend/ ./
-
-# ต้องมี sqlite-dev เพื่อ header & libsqlite3
-RUN apk add --no-cache build-base git sqlite-dev
-
+# ถ้าต้องการ CGO/SQLite ให้แน่ใจว่ามี gcc/make
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential git \
+    && rm -rf /var/lib/apt/lists/*
 RUN go mod download
-# ใช้แท็ก libsqlite3 ให้ลิงก์กับ lib ของระบบ (เลี่ยงปัญหา pread64/…)
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "libsqlite3" -o /out/myapp .
+# สร้างไบนารี (เปิด CGO)
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o /out/myapp .
 
-# ---------- Runtime (Alpine) ----------
-FROM alpine:3.20
+# ---------- Runtime stage (Debian slim) ----------
+FROM debian:bookworm-slim
 WORKDIR /app
-# runtime ต้องมี libsqlite3 ให้ไบนารีลิงก์ได้
-RUN apk add --no-cache sqlite-libs ca-certificates
 COPY --from=build /out/myapp /app/myapp
+# ถ้า runtime ต้องการ ca-certificates (เรียก API ออกเน็ต) แนะนำติดตั้ง
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 EXPOSE 8000
 CMD ["/app/myapp"]
