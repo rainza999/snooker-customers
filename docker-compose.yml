@@ -1,5 +1,3 @@
-version: "3.9"
-
 networks:
     snookersystembuild:
 
@@ -33,8 +31,6 @@ services:
         # ports: ["8001:8000"]   # เปิดไว้ debug ก็ได้ (ไม่จำเป็น)
         volumes:
             - ./data/demo1/snooker.db:/app/snooker.db
-            - ./data/demo1/machine-id:/etc/machine-id:ro
-            - ./data/demo1/license.json:/app/license.json
         networks:
             - snookersystembuild
 
@@ -47,8 +43,6 @@ services:
         # ports: ["8002:8000"]
         volumes:
             - ./data/demo2/snooker.db:/app/snooker.db
-            - ./data/demo2/machine-id:/etc/machine-id:ro
-            - ./data/demo2/license.json:/app/license.json
         networks:
             - snookersystembuild
 
@@ -61,8 +55,6 @@ services:
         # ports: ["8003:8000"]
         volumes:
             - ./data/demo3/snooker.db:/app/snooker.db
-            - ./data/demo3/machine-id:/etc/machine-id:ro
-            - ./data/demo3/license.json:/app/license.json
         networks:
             - snookersystembuild
 
@@ -75,7 +67,5 @@ services:
         # ports: ["8004:8000"]
         volumes:
             - ./data/demo4/snooker.db:/app/snooker.db
-            - ./data/demo4/machine-id:/etc/machine-id:ro
-            - ./data/demo4/license.json:/app/license.json
         networks:
             - snookersystembuild
