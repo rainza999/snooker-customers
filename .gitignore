@@ -1,0 +1,28 @@
+frontend - Copy
+frontend-128
+# Node
+node_modules/
+dist/
+build/
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Docker junk
+*.pid
+
+# Nginx logs + SSL (อย่าใส่ cert ลง repo)
+nginx/log/
+nginx/ssl/
+
+# Local env
+.env
+.env.*
+
+# Databases (อย่าใส่ SQLite ลง repo)
+data/
+*.db
+
+# Go build artifacts (ถ้าบิลด์ local)
+backend/myapp

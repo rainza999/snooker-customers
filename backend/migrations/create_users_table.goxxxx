@@ -1,0 +1,37 @@
+// package migrate
+
+// import (
+// 	"fmt"
+// 	"log"
+
+// 	AuthController "github.com/rainza999/fiber-test/controller/auth"
+// 	"github.com/rainza999/fiber-test/db"
+// 	model "github.com/rainza999/fiber-test/models"
+// )
+
+// func MigrateUserData() {
+// 	// Migrate user data
+// 	db.Db.AutoMigrate(&model.User{})
+
+// 	// Create sample users
+// 	users := []model.User{
+// 		{Username: "user1", Password: "hashed_password_1", Fullname: "User One"},
+// 		{Username: "user2", Password: "hashed_password_2", Fullname: "User Two"},
+// 		{Username: "user3", Password: "hashed_password_3", Fullname: "User Three"},
+// 		{Username: "dutchun", Password: "1234", Fullname: "Dutchun"},
+// 		{Username: "rain", Password: "1234", Fullname: "Rain"},
+// 	}
+
+// 	for _, user := range users {
+// 		// Hash the password before creating the user
+// 		hashedPassword, err := AuthController.HashPassword(user.Password)
+// 		if err != nil {
+// 			log.Fatal(err)
+// 		}
+// 		user.Password = hashedPassword
+
+// 		db.Db.Create(&user)
+// 	}
+
+// 	fmt.Println("User data migrated successfully")
+// }

@@ -1,0 +1,241 @@
+package auths
+
+import (
+	"fmt"
+	"log"
+	"strconv"
+
+	"github.com/rainza999/fiber-test/db"
+	"gorm.io/gorm"
+
+	"time"
+
+	// "github.com/dgrijalva/jwt-go"
+	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v4"
+	model "github.com/rainza999/fiber-test/models"
+	"golang.org/x/crypto/bcrypt"
+)
+
+var jwtSecret = []byte("your-secret-key")
+
+// Binding from JSON
+type LoginBody struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+func Login(c *fiber.Ctx) error {
+	var json LoginBody
+
+	// Parse request body
+	if err := c.BodyParser(&json); err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+	// พิมพ์ข้อมูล credentials ลงใน console
+	fmt.Println("Received credentials:", json)
+	// Check if user exists
+	var userExists model.User
+	if err := db.Db.Where("username = ?", json.Username).First(&userExists).Error; err != nil {
+		return c.Status(401).JSON(fiber.Map{
+			"error": "Invalid username or password1",
+		})
+	}
+
+	// Check password
+	if !CheckPasswordHash(json.Password, userExists.Password) {
+		return c.Status(401).JSON(fiber.Map{
+			"error": "Invalid username or password2",
+		})
+	}
+
+	// Password is correct, generate JWT token
+	// token, err := GenerateJWTToken(userExists.Fullname)
+	// if err != nil {
+	// 	return c.Status(500).JSON(fiber.Map{
+	// 		"error": "Failed to generate token",
+	// 	})
+	// }
+
+	// // Create JWT token
+	// token := jwt.New(jwt.SigningMethodHS256)
+	// claims := token.Claims.(jwt.MapClaims)
+	// claims["user_id"] = userExists.ID
+	// claims["exp"] = time.Now().Add(time.Hour * 72).Unix()
+
+	// t, err := token.SignedString(jwtSecret)
+	// if err != nil {
+	// 	return c.SendStatus(fiber.StatusInternalServerError)
+	// }
+
+	// c.Cookie(&fiber.Cookie{
+	// 	Name:     "jwt",
+	// 	Value:    t,
+	// 	Expires:  time.Now().Add(time.Hour * 72),
+	// 	HTTPOnly: true,
+	// })
+
+	// Create JWT token
+	// token := jwt.New(jwt.SigningMethodHS256)
+	// claims := token.Claims.(jwt.MapClaims)
+	// claims["user_id"] = userExists.ID
+	// claims["exp"] = time.Now().Add(time.Hour * 72).Unix()
+
+	// t, err := token.SignedString(jwtSecret)
+	// if err != nil {
+	// 	return c.SendStatus(fiber.StatusInternalServerError)
+	// }
+
+	// // Set cookie
+	// c.Cookie(&fiber.Cookie{
+	// 	Name:     "jwt",
+	// 	Value:    t,
+	// 	Expires:  time.Now().Add(time.Hour * 72),
+	// 	HTTPOnly: true,
+	// })
+	claims := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.StandardClaims{
+		Issuer:    strconv.Itoa(int(userExists.ID)),
+		ExpiresAt: time.Now().Add(time.Hour * 24).Unix(), //1 day
+	})
+	token, err := claims.SignedString(jwtSecret)
+	if err != nil {
+		return c.SendStatus(fiber.StatusInternalServerError)
+	}
+
+	cookie := fiber.Cookie{
+		Name:     "jwt",
+		Value:    token,
+		Expires:  time.Now().Add(time.Hour * 24),
+		HTTPOnly: true,
+	}
+
+	c.Cookie(&cookie)
+
+	// fmt.Println("hello Auth")
+	// fmt.Println(c.Cookies("jwt"))
+	// fmt.Println(t)
+
+	// Return the token to the client
+	// return c.Status(200).JSON(fiber.Map{
+	// 	"status": "ok",
+	// 	"token":  t,
+	// })
+	return c.JSON(fiber.Map{
+		"message": "success",
+	})
+}
+
+// You might need to implement a password hashing function like bcrypt
+func CheckPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+func HashPassword(password string) (string, error) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashedPassword), nil
+}
+
+// GenerateJWTToken generates a JWT token with expiration time
+func GenerateJWTToken(fullname string) (string, error) {
+	// Set expiration time to 24 hours
+	expirationTime := time.Now().Add(24 * time.Hour)
+
+	// Create the JWT claims, which include the username and expiration time
+	claims := &jwt.StandardClaims{
+		Subject:   fullname,
+		ExpiresAt: expirationTime.Unix(),
+	}
+
+	// Create the token with claims and sign it with the secret key
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		return "", err
+	}
+
+	return tokenString, nil
+}
+
+type User struct {
+	gorm.Model
+	Username string `gorm:"unique"`
+	Password string
+}
+
+func LoginUser(c *fiber.Ctx) error {
+	var input User
+	var user User
+
+	if err := c.BodyParser(&input); err != nil {
+		return err
+	}
+
+	// Find user by email
+	db.Db.Where("username = ?", input.Username).First(&user)
+
+	// // Check password
+	// if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
+	// 	return c.SendStatus(fiber.StatusUnauthorized)
+	// }
+
+	if !CheckPasswordHash(input.Password, user.Password) {
+		return c.Status(401).JSON(fiber.Map{
+			"error": "Invalid username or password2",
+		})
+	}
+	c.ClearCookie()
+	// Create JWT token
+	token := jwt.New(jwt.SigningMethodHS256)
+	claims := token.Claims.(jwt.MapClaims)
+	claims["user_id"] = user.ID
+	claims["exp"] = time.Now().Add(time.Hour * 72).Unix()
+
+	fmt.Println(user.ID)
+	t, err := token.SignedString([]byte("your-secret-key"))
+	if err != nil {
+		return c.SendStatus(fiber.StatusInternalServerError)
+	}
+
+	// Set cookie
+	c.Cookie(&fiber.Cookie{
+		Name:     "jwt",
+		Value:    t,
+		Expires:  time.Now().Add(time.Hour * 72),
+		Domain:   "*",
+		HTTPOnly: false,
+		Secure:   false, // ใช้ false หากไม่ได้ใช้ HTTPS
+		SameSite: "Lax",
+	})
+	log.Println("Login successful. JWT token:", t)
+	log.Println("teset Login Show Cookie:", c.Cookies("jwt"))
+	return c.JSON(fiber.Map{"message": "success"})
+}
+
+func Users(c *fiber.Ctx) error {
+	cookie := c.Cookies("jwt")
+	fmt.Println(cookie)
+	fmt.Println("cookie")
+	token, err := jwt.ParseWithClaims(cookie, &jwt.StandardClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return jwtSecret, nil
+	})
+
+	if err != nil {
+		c.Status(fiber.StatusUnauthorized)
+		return c.JSON(fiber.Map{
+			"message": "unauthenticated",
+		})
+	}
+
+	claims := token.Claims.(*jwt.StandardClaims)
+
+	var user model.User
+
+	db.Db.Where("id = ?", claims.Issuer).First(&user)
+
+	return c.JSON(user)
+}
