@@ -31,6 +31,7 @@ services:
         # ports: ["8001:8000"]   # เปิดไว้ debug ก็ได้ (ไม่จำเป็น)
         volumes:
             - ./data/demo1/snooker.db:/app/snooker.db
+            - ./data/uploads:/app/uploads
         networks:
             - snookersystembuild
 
@@ -43,6 +44,7 @@ services:
         # ports: ["8002:8000"]
         volumes:
             - ./data/demo2/snooker.db:/app/snooker.db
+            - ./data/uploads:/app/uploads
         networks:
             - snookersystembuild
 
@@ -55,6 +57,7 @@ services:
         # ports: ["8003:8000"]
         volumes:
             - ./data/demo3/snooker.db:/app/snooker.db
+            - ./data/uploads:/app/uploads
         networks:
             - snookersystembuild
 
@@ -67,5 +70,6 @@ services:
         # ports: ["8004:8000"]
         volumes:
             - ./data/demo4/snooker.db:/app/snooker.db
+            - ./data/uploads:/app/uploads
         networks:
             - snookersystembuild
