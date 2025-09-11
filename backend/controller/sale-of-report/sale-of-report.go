@@ -169,14 +169,14 @@ func GetMonthlySalesReport(c *fiber.Ctx) error {
 
 	// Query ดึงข้อมูลยอดขายตามเดือน
 	var report []struct {
-		Date     string  `json:"date"`
-		GameFee  float64 `json:"game_fee"`
-		FoodFee  float64 `json:"food_fee"`
-		DrinkFee float64 `json:"drink_fee"`
-		Cat4     float64 `json:"cat_4"`
-		Cat2     float64 `json:"cat_2"`
-		Cat5678  float64 `json:"cat_5678"`
-		TotalFee float64 `json:"total_fee"`
+		Date       string  `json:"date"`
+		GameFee    float64 `json:"game_fee"`
+		FoodFee    float64 `json:"food_fee"`
+		DrinkFee   float64 `json:"drink_fee"`
+		Cat4Fee    float64 `json:"cat4_fee"`
+		Cat2Fee    float64 `json:"cat2_fee"`
+		Cat5678Fee float64 `json:"cat5678_fee"`
+		TotalFee   float64 `json:"total_fee"`
 	}
 
 	query := `
@@ -185,9 +185,9 @@ func GetMonthlySalesReport(c *fiber.Ctx) error {
   COALESCE(SUM(CASE WHEN s.product_id = 1 THEN s.net_price END), 0)                      AS game_fee,
   COALESCE(SUM(CASE WHEN p.category_id = 3 THEN s.net_price END), 0)                     AS food_fee,
   COALESCE(SUM(CASE WHEN p.category_id = 1 THEN s.net_price END), 0)                     AS drink_fee,
-  COALESCE(SUM(CASE WHEN p.category_id = 4 THEN s.net_price END), 0)                     AS cat_4,
-  COALESCE(SUM(CASE WHEN p.category_id = 2 THEN s.net_price END), 0)                     AS cat_2,
-  COALESCE(SUM(CASE WHEN p.category_id IN (5,6,7,8) THEN s.net_price END), 0)            AS cat_5678,
+  COALESCE(SUM(CASE WHEN p.category_id = 4 THEN s.net_price END), 0)                     AS cat4_fee,
+  COALESCE(SUM(CASE WHEN p.category_id = 2 THEN s.net_price END), 0)                     AS cat2_fee,
+  COALESCE(SUM(CASE WHEN p.category_id IN (5,6,7,8) THEN s.net_price END), 0)            AS cat5678_fee,
   COALESCE(SUM(s.net_price), 0)                                                          AS total_fee
 FROM visitations v
 JOIN services s ON v.id = s.visitation_id
