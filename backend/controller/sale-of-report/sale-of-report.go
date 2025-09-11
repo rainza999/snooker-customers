@@ -180,22 +180,24 @@ func GetMonthlySalesReport(c *fiber.Ctx) error {
 	}
 
 	query := `
-    SELECT 
-        DATE(datetime(visitations.start_time, '+7 hours')) AS date,
-		SUM(CASE WHEN services.product_id = 1 THEN services.net_price ELSE 0 END) AS game_fee,
-		SUM(CASE WHEN categories.id = 3 THEN services.net_price ELSE 0 END) AS food_fee,
-        SUM(CASE WHEN categories.id = 1 THEN services.net_price ELSE 0 END) AS drink_fee,
-		SUM(CASE WHEN categories.id = 4 THEN services.net_price ELSE 0 END) AS cat_4,
-    	SUM(CASE WHEN categories.id = 2 THEN services.net_price ELSE 0 END) AS cat_2,
-		SUM(CASE WHEN categories.id in (5,6,7,8) THEN services.net_price ELSE 0 END) AS cat_5678,
-        SUM(services.net_price) AS total_fee
-    FROM visitations
-    JOIN services ON visitations.id = services.visitation_id
-	join products on products.id = services.product_id
-	left join categories on categories.id = products.category_id
-    WHERE services.status = 'paid' AND visitations.start_time BETWEEN ? AND ?
-    GROUP BY DATE(datetime(visitations.start_time, '+7 hours'))
-    ORDER BY DATE(datetime(visitations.start_time, '+7 hours'))
+    SELECT
+  DATE(datetime(v.start_time, '+7 hours')) AS date,
+  COALESCE(SUM(CASE WHEN s.product_id = 1 THEN s.net_price END), 0)                      AS game_fee,
+  COALESCE(SUM(CASE WHEN p.category_id = 3 THEN s.net_price END), 0)                     AS food_fee,
+  COALESCE(SUM(CASE WHEN p.category_id = 1 THEN s.net_price END), 0)                     AS drink_fee,
+  COALESCE(SUM(CASE WHEN p.category_id = 4 THEN s.net_price END), 0)                     AS cat_4,
+  COALESCE(SUM(CASE WHEN p.category_id = 2 THEN s.net_price END), 0)                     AS cat_2,
+  COALESCE(SUM(CASE WHEN p.category_id IN (5,6,7,8) THEN s.net_price END), 0)            AS cat_5678,
+  COALESCE(SUM(s.net_price), 0)                                                          AS total_fee
+FROM visitations v
+JOIN services s ON v.id = s.visitation_id
+JOIN products p ON p.id = s.product_id
+WHERE s.status = 'paid'
+  AND v.start_time >= ?
+  AND v.start_time <  ?
+GROUP BY DATE(datetime(v.start_time, '+7 hours'))
+ORDER BY DATE(datetime(v.start_time, '+7 hours'));
+
 `
 
 	// แปลง selectedMonth ที่เป็น "YYYY-MM" เพื่อกำหนดช่วงวันที่
