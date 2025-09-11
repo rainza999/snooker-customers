@@ -180,13 +180,17 @@ func GetMonthlySalesReport(c *fiber.Ctx) error {
 	query := `
     SELECT 
         DATE(datetime(visitations.start_time, '+7 hours')) AS date,
-        SUM(CASE WHEN services.product_id = 1 THEN services.net_price ELSE 0 END) AS game_fee,
-        SUM(CASE WHEN services.product_id = 2 THEN services.net_price ELSE 0 END) AS food_fee,
-        SUM(CASE WHEN services.product_id = 3 THEN services.net_price ELSE 0 END) AS drink_fee,
-        SUM(CASE WHEN services.product_id = 4 THEN services.net_price ELSE 0 END) AS sport_equipment_fee,
+		SUM(CASE WHEN services.product_id = 1 THEN services.net_price ELSE 0 END) AS game_fee,
+		SUM(CASE WHEN categories.id = 3 THEN services.net_price ELSE 0 END) AS food_fee,
+        SUM(CASE WHEN categories.id = 1 THEN services.net_price ELSE 0 END) AS drink_fee,
+		SUM(CASE WHEN categories.id = 4 THEN services.net_price ELSE 0 END) AS cat_4,
+    	SUM(CASE WHEN categories.id = 2 THEN services.net_price ELSE 0 END) AS cat_2,
+		SUM(CASE WHEN categories.id in (5,6,7,8) THEN services.net_price ELSE 0 END) AS cat_5678,
         SUM(services.net_price) AS total_fee
     FROM visitations
     JOIN services ON visitations.id = services.visitation_id
+	join products on products.id = services.product_id
+	left join categories on categories.id = products.category_id
     WHERE services.status = 'paid' AND visitations.start_time BETWEEN ? AND ?
     GROUP BY DATE(datetime(visitations.start_time, '+7 hours'))
     ORDER BY DATE(datetime(visitations.start_time, '+7 hours'))
