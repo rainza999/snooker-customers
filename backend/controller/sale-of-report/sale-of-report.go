@@ -169,12 +169,14 @@ func GetMonthlySalesReport(c *fiber.Ctx) error {
 
 	// Query ดึงข้อมูลยอดขายตามเดือน
 	var report []struct {
-		Date              string  `json:"date"`
-		GameFee           float64 `json:"game_fee"`
-		FoodFee           float64 `json:"food_fee"`
-		DrinkFee          float64 `json:"drink_fee"`
-		SportEquipmentFee float64 `json:"sport_equipment_fee"`
-		TotalFee          float64 `json:"total_fee"`
+		Date     string  `json:"date"`
+		GameFee  float64 `json:"game_fee"`
+		FoodFee  float64 `json:"food_fee"`
+		DrinkFee float64 `json:"drink_fee"`
+		Cat4     float64 `json:"cat_4"`
+		Cat2     float64 `json:"cat_2"`
+		Cat5678  float64 `json:"cat_5678"`
+		TotalFee float64 `json:"total_fee"`
 	}
 
 	query := `
