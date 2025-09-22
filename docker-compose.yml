@@ -17,9 +17,6 @@ services:
             - ./data/uploads:/srv/uploads:ro
         depends_on:
             - golang-demo1
-            - golang-demo2
-            - golang-demo3
-            - golang-demo4
         networks:
             - snookersystembuild
 
@@ -32,45 +29,6 @@ services:
         # ports: ["8001:8000"]   # เปิดไว้ debug ก็ได้ (ไม่จำเป็น)
         volumes:
             - ./data/demo1/snooker.db:/app/snooker.db
-            - ./data/uploads:/app/uploads
-        networks:
-            - snookersystembuild
-
-    golang-demo2:
-        build:
-            context: .
-            dockerfile: Dockerfile
-        container_name: golang-snooker-demo2
-        working_dir: /app
-        # ports: ["8002:8000"]
-        volumes:
-            - ./data/demo2/snooker.db:/app/snooker.db
-            - ./data/uploads:/app/uploads
-        networks:
-            - snookersystembuild
-
-    golang-demo3:
-        build:
-            context: .
-            dockerfile: Dockerfile
-        container_name: golang-snooker-demo3
-        working_dir: /app
-        # ports: ["8003:8000"]
-        volumes:
-            - ./data/demo3/snooker.db:/app/snooker.db
-            - ./data/uploads:/app/uploads
-        networks:
-            - snookersystembuild
-
-    golang-demo4:
-        build:
-            context: .
-            dockerfile: Dockerfile
-        container_name: golang-snooker-demo4
-        working_dir: /app
-        # ports: ["8004:8000"]
-        volumes:
-            - ./data/demo4/snooker.db:/app/snooker.db
             - ./data/uploads:/app/uploads
         networks:
             - snookersystembuild
