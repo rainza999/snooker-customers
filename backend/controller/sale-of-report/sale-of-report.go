@@ -193,8 +193,10 @@ FROM visitations v
 JOIN services s ON v.id = s.visitation_id
 JOIN products p ON p.id = s.product_id
 WHERE s.status = 'paid'
+  AND s.deleted_at IS NULL
   AND v.start_time >= ?
   AND v.start_time <  ?
+  AND v.deleted_at is null
 GROUP BY DATE(datetime(v.start_time, '+7 hours'))
 ORDER BY DATE(datetime(v.start_time, '+7 hours'));
 
@@ -605,6 +607,7 @@ JOIN services s ON v.id = s.visitation_id
 JOIN products p ON p.id = s.product_id
 WHERE 
   s.deleted_at IS NULL
+  and v.deleted_at is null
   AND (s.status = 'paid' OR s.status = 'draft')
   AND v.start_time >= ?
   AND v.start_time < ?

@@ -180,7 +180,7 @@ func SearchProductTransactions(c *fiber.Ctx) error {
 		INNER JOIN visitations v ON v.id = s.visitation_id
 		WHERE 
 			s.deleted_at IS NULL
-			AND s.status = 'paid'
+			AND (s.status = 'paid' or s.status = 'draft')
 			AND v.deleted_at IS NULL
 			AND substr(v.visit_date, 1, 7) = ?
 			AND s.product_id = ?
