@@ -474,8 +474,35 @@ func GetDailySalesCloseReport(c *fiber.Ctx) error {
 		ChangeAmount float64   `json:"change_amount"`
 		Uuid         string    `json:"uuid"`
 	}
-	err := db.Db.Raw(`SELECT bill_code, start_time, end_time, net_price, total_cost, paid_amount, change_amount, table_id, uuid
-		FROM visitations WHERE (start_time BETWEEN ? AND ? )  and deleted_at is null and is_active = 0`, startDate, endDate).Scan(&visitations).Error
+	// err := db.Db.Raw(`SELECT bill_code, start_time, end_time, net_price, total_cost, paid_amount, change_amount, table_id, uuid
+	// 	FROM visitations WHERE (start_time BETWEEN ? AND ? )  and deleted_at is null and is_active = 0`, startDate, endDate).Scan(&visitations).Error
+	err := db.Db.Raw(`
+	SELECT 
+		v.bill_code, 
+		v.start_time, 
+		v.end_time, 
+		COALESCE(SUM(s.net_price), 0)  AS net_price, 
+		COALESCE(SUM(s.total_cost), 0) AS total_cost,
+		v.paid_amount, 
+		v.change_amount, 
+		v.table_id, 
+		v.uuid
+	FROM visitations v
+	LEFT JOIN services s 
+		ON v.id = s.visitation_id 
+		AND s.deleted_at IS NULL 
+		AND (s.status = 'paid' OR s.status = 'draft')
+	WHERE 
+		v.start_time BETWEEN ? AND ?
+		AND v.deleted_at IS NULL
+		AND v.is_active = 0
+	GROUP BY 
+		v.id, v.bill_code, v.start_time, v.end_time, v.paid_amount, 
+		v.change_amount, v.table_id, v.uuid
+	ORDER BY 
+		v.start_time ASC
+`, startDate, endDate).Scan(&visitations).Error
+
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -608,7 +635,7 @@ JOIN products p ON p.id = s.product_id
 WHERE 
   s.deleted_at IS NULL
   and v.deleted_at is null
-  AND (s.status = 'paid' OR s.status = 'draft')
+  AND s.status = 'draft'
   AND v.start_time >= ?
   AND v.start_time < ?
 GROUP BY DATE(datetime(v.start_time, '+7 hours'))
