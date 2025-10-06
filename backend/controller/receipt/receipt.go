@@ -271,17 +271,19 @@ func FinalizeReceipt(c *fiber.Ctx) error {
 	log.Printf("Updated Receipt ID: %d", receiptX.ID)
 
 	for _, receipt := range payload.Receipts {
-		// อัปเดตสถานะ receipt_item_status เป็น save ในฐานข้อมูล
+		// ✅ อัปเดตเฉพาะ item ที่ยังไม่ถูกลบ
 		if err := db.Db.Model(&model.ProductReceiptItem{}).
-			Where("product_id = ? AND receipt_id = ?", receipt.ProductID, receiptX.ID).
+			Where("product_id = ? AND receipt_id = ? AND deleted_at IS NULL", receipt.ProductID, receiptX.ID).
 			Update("receipt_item_status", "save").Error; err != nil {
 			log.Printf("Error updating receipt status: %v", err)
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to update receipt status",
 			})
 		}
+
 		var productReceiptItem model.ProductReceiptItem
-		err := db.Db.Where("product_id = ? AND receipt_id = ?", receipt.ProductID, receiptX.ID).
+		err := db.Db.
+			Where("product_id = ? AND receipt_id = ? AND deleted_at IS NULL", receipt.ProductID, receiptX.ID).
 			First(&productReceiptItem).Error
 		if err != nil {
 			log.Printf("❌ Error finding ProductReceiptItem: %v", err)
@@ -289,18 +291,18 @@ func FinalizeReceipt(c *fiber.Ctx) error {
 				"error": "Failed to find matching ProductReceiptItem",
 			})
 		}
-		// เพิ่มข้อมูลลง StockEntry
+
+		// ✅ เพิ่ม stock เฉพาะรายการที่ยังอยู่จริง
 		stockEntry := model.StockEntry{
 			ProductID:            receipt.ProductID,
-			StockLocationID:      1,                                              // กำหนด StockLocationID เป็น 1
-			Quantity:             receipt.Quantity,                               // ดึงจาก quantity
-			RemainingQty:         receipt.Quantity,                               // RemainingQty เท่ากับ quantity
-			CostPerUnit:          receipt.TotalPrice / float64(receipt.Quantity), // ราคาต่อหน่วย
-			ProductReceiptItemID: &productReceiptItem.ID,                         // ✅ ใส่ตรงนี้
+			StockLocationID:      1,
+			Quantity:             receipt.Quantity,
+			RemainingQty:         receipt.Quantity,
+			CostPerUnit:          receipt.TotalPrice / float64(receipt.Quantity),
+			ProductReceiptItemID: &productReceiptItem.ID,
 			EntryDate:            time.Now(),
 		}
 
-		// บันทึก StockEntry ลงฐานข้อมูล
 		if err := db.Db.Create(&stockEntry).Error; err != nil {
 			log.Printf("Error creating StockEntry: %v", err)
 			return c.Status(500).JSON(fiber.Map{
