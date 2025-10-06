@@ -72,18 +72,20 @@ func EditReceipt(c *fiber.Ctx) error {
 }
 func DraftReceipt(c *fiber.Ctx) error {
 	var drafts []struct {
-		ID                  uint    `json:"id"`
-		Supplier            uint    `json:"supplier"`
-		Product             uint    `json:"product"`
-		Quantity            int     `json:"quantity"`
-		TotalPrice          float64 `json:"totalPrice"`
-		PurchaseOrderNumber string  `json:"purchaseOrderNumber"`
-		Status              string  `json:"status"`
+		ReceiptID            uint    `json:"receipt_id"`
+		ProductReceiptItemID uint    `json:"product_receipt_item_id"`
+		Supplier             uint    `json:"supplier"`
+		Product              uint    `json:"product"`
+		Quantity             int     `json:"quantity"`
+		TotalPrice           float64 `json:"totalPrice"`
+		PurchaseOrderNumber  string  `json:"purchaseOrderNumber"`
+		Status               string  `json:"status"`
 	}
 
 	if err := db.Db.Debug().Table("product_receipts").
 		Select(`
-			product_receipts.id, 
+			product_receipts.id as receipt_id, 
+			product_receipt_items.id as product_receipt_item_id, 
 			product_receipts.supplier_id AS supplier, 
 			product_receipt_items.product_id AS product, 
 			product_receipt_items.quantity, 
@@ -271,19 +273,17 @@ func FinalizeReceipt(c *fiber.Ctx) error {
 	log.Printf("Updated Receipt ID: %d", receiptX.ID)
 
 	for _, receipt := range payload.Receipts {
-		// ✅ อัปเดตเฉพาะ item ที่ยังไม่ถูกลบ
+		// อัปเดตสถานะ receipt_item_status เป็น save ในฐานข้อมูล
 		if err := db.Db.Model(&model.ProductReceiptItem{}).
-			Where("product_id = ? AND receipt_id = ? AND deleted_at IS NULL", receipt.ProductID, receiptX.ID).
+			Where("product_id = ? AND receipt_id = ?", receipt.ProductID, receiptX.ID).
 			Update("receipt_item_status", "save").Error; err != nil {
 			log.Printf("Error updating receipt status: %v", err)
 			return c.Status(500).JSON(fiber.Map{
 				"error": "Failed to update receipt status",
 			})
 		}
-
 		var productReceiptItem model.ProductReceiptItem
-		err := db.Db.
-			Where("product_id = ? AND receipt_id = ? AND deleted_at IS NULL", receipt.ProductID, receiptX.ID).
+		err := db.Db.Where("product_id = ? AND receipt_id = ?", receipt.ProductID, receiptX.ID).
 			First(&productReceiptItem).Error
 		if err != nil {
 			log.Printf("❌ Error finding ProductReceiptItem: %v", err)
@@ -291,18 +291,18 @@ func FinalizeReceipt(c *fiber.Ctx) error {
 				"error": "Failed to find matching ProductReceiptItem",
 			})
 		}
-
-		// ✅ เพิ่ม stock เฉพาะรายการที่ยังอยู่จริง
+		// เพิ่มข้อมูลลง StockEntry
 		stockEntry := model.StockEntry{
 			ProductID:            receipt.ProductID,
-			StockLocationID:      1,
-			Quantity:             receipt.Quantity,
-			RemainingQty:         receipt.Quantity,
-			CostPerUnit:          receipt.TotalPrice / float64(receipt.Quantity),
-			ProductReceiptItemID: &productReceiptItem.ID,
+			StockLocationID:      1,                                              // กำหนด StockLocationID เป็น 1
+			Quantity:             receipt.Quantity,                               // ดึงจาก quantity
+			RemainingQty:         receipt.Quantity,                               // RemainingQty เท่ากับ quantity
+			CostPerUnit:          receipt.TotalPrice / float64(receipt.Quantity), // ราคาต่อหน่วย
+			ProductReceiptItemID: &productReceiptItem.ID,                         // ✅ ใส่ตรงนี้
 			EntryDate:            time.Now(),
 		}
 
+		// บันทึก StockEntry ลงฐานข้อมูล
 		if err := db.Db.Create(&stockEntry).Error; err != nil {
 			log.Printf("Error creating StockEntry: %v", err)
 			return c.Status(500).JSON(fiber.Map{
