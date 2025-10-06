@@ -727,7 +727,14 @@ func Setup(app *fiber.App) {
 	saleReport.Get("/monthly", saleofreport.GetMonthlySalesReport)
 	saleReport.Get("/:uuid/daily", saleofreport.GetDailySalesReportDetail)
 
-	saleProductReport := app.Group("/sale-product-reports")
+	saleCloseReport := app.Group("/sale-report-closes")
+	saleCloseReport.Get("/daily", saleofreport.GetDailySalesCloseReport) // ดึงรายงานแบบวัน
+	saleCloseReport.Get("/monthly", saleofreport.GetMonthlySalesCloseReport)
+	saleCloseReport.Get("/:uuid/daily", saleofreport.GetDailySalesCloseReportDetail)
+
+	// settingPointOfSale := app.Group("/setting-point-of-sales", checkJWTHeader, middleware.PermissionMiddleware("setting-point-of-sale-access"))
+
+	saleProductReport := app.Group("/sale-product-reports", checkJWTHeader, middleware.PermissionMiddleware("sale-report-closes-access"))
 	saleProductReport.Get("/daily", saleofreport.GetDailySaleProductReport) // ดึงรายงานแบบวัน
 	saleProductReport.Get("/monthly", saleofreport.GetMonthlySaleProductReport)
 	// saleReport.Get("/:uuid/daily/edit", saleofreport.GetDailySalesReportDetailEdit)

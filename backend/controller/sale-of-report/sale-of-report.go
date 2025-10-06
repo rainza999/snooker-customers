@@ -447,3 +447,182 @@ func GetDailySaleProductReport(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"report": report})
 }
+
+// ฟังก์ชันดึงข้อมูลรายงานยอดขายรายวัน
+func GetDailySalesCloseReport(c *fiber.Ctx) error {
+	startDate, endDate := c.Query("start_date"), c.Query("end_date")
+
+	// ตรวจสอบวันที่
+	if err := validateDateRange(startDate, endDate); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// แปลง endDate ให้เป็นสิ้นสุดวัน (23:59:59)
+	endDate = endDate + " 23:59:59"
+
+	// Query ข้อมูลจากฐานข้อมูล
+	var visitations []struct {
+		BillCode     string    `json:"bill_code"`
+		StartTime    time.Time `json:"start_time"`
+		EndTime      time.Time `json:"end_time"`
+		NetPrice     float64   `json:"net_price"`
+		TotalCost    float64   `json:"total_cost"`
+		TableID      uint      `json:"table_id"`
+		PaidAmount   float64   `json:"paid_amount"`
+		ChangeAmount float64   `json:"change_amount"`
+		Uuid         string    `json:"uuid"`
+	}
+	err := db.Db.Raw(`SELECT bill_code, start_time, end_time, net_price, total_cost, paid_amount, change_amount, table_id, uuid
+		FROM visitations WHERE (start_time BETWEEN ? AND ? )  and deleted_at is null and is_active = 0`, startDate, endDate).Scan(&visitations).Error
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// แปลงข้อมูล start_time ให้เป็นแยก "ปี-เดือน-วัน" และ "เวลา HH:MM"
+	var reportData []VisitationReport
+	for _, v := range visitations {
+		reportData = append(reportData, VisitationReport{
+			TableName:  getTableName(v.TableID), // ฟังก์ชันสำหรับดึงชื่อโต๊ะ
+			BillNumber: v.BillCode,
+			StartDate:  v.StartTime.Format("2006-01-02"), // แปลงเป็น "ปี-เดือน-วัน"
+			StartTime:  v.StartTime.Format("15:04"),      // แปลงเป็น "HH:MM"
+			EndDate:    v.EndTime.Format("2006-01-02"),   // แปลงเป็น "ปี-เดือน-วัน"
+			EndTime:    v.EndTime.Format("15:04"),        // แปลงเป็น "HH:MM"
+			TotalBill:  v.NetPrice,
+			Uuid:       v.Uuid,
+		})
+	}
+
+	// ตรวจสอบว่ามีข้อมูลหรือไม่ ถ้าไม่มีให้ส่ง response ที่เหมาะสมกลับไป
+	if len(reportData) == 0 {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"visitations": nil})
+	}
+
+	return c.JSON(fiber.Map{"visitations": reportData})
+}
+
+// ฟังก์ชันสำหรับดึงรายละเอียดรายงานการขาย (detail)
+func GetDailySalesCloseReportDetail(c *fiber.Ctx) error {
+	// ดึง uuid จาก URL parameter
+	uuid := c.Params("uuid")
+
+	// Query ข้อมูลของบิลจาก table visitations
+	var visitation struct {
+		ID           uint    `json:"id"` // visitation_id เพื่อเอาไปใช้ค้นใน services
+		BillCode     string  `json:"bill_code"`
+		TableID      uint    `json:"table_id"`
+		TableName    string  `json:"table_name"`
+		StartTime    string  `json:"start_time"`
+		EndTime      string  `json:"end_time"`
+		NetPrice     float64 `json:"net_price"`
+		TotalCost    float64 `json:"total_cost"`
+		PaidAmount   float64 `json:"paid_amount"`
+		ChangeAmount float64 `json:"change_amount"`
+		TableType    uint    `json:"table_type"`
+		Price        float64 `json:"price"`
+		Price2       float64 `json:"price2"`
+	}
+	// Query ข้อมูลจาก table visitations โดยใช้ uuid
+	err := db.Db.Raw(`SELECT visitations.id, bill_code, 
+    table_id, start_time, end_time, net_price, total_cost, paid_amount, change_amount, table_type, setting_tables.name as table_name,
+    setting_tables.price as price, 
+    setting_tables.price2 as price2
+
+
+		FROM visitations left join setting_tables on visitations.table_id = setting_tables.id WHERE uuid = ?`, uuid).Scan(&visitation).Error
+
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "ไม่พบข้อมูลรายละเอียดของรายงาน",
+		})
+	}
+	// Query ข้อมูลจาก table services โดย join กับ products
+	var serviceDetails []struct {
+		ProductID    uint    `json:"product_id"`    // รหัสสินค้า
+		ProductName  string  `json:"product_name"`  // ชื่อสินค้า (จาก products table)
+		SellQuantity float64 `json:"sell_quantity"` // จำนวน
+		TotalCost    float64 `json:"total_cost"`    // ราคา
+		NetPrice     float64 `json:"net_price"`     // ราคาสุทธิ
+	}
+
+	// Query ข้อมูลจาก services ที่เชื่อมกับ visitation_id และ products
+	err = db.Db.Raw(`
+	SELECT 
+		services.product_id,
+		products.name AS product_name,
+		services.sell_quantity,
+		services.total_cost,
+		services.net_price
+	FROM services
+	LEFT JOIN products ON services.product_id = products.id
+	WHERE 
+		services.visitation_id = ? 
+		AND services.deleted_at IS NULL 
+		AND (services.status = 'paid' OR services.status = 'draft')
+`, visitation.ID).Scan(&serviceDetails).Error
+
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "ไม่พบข้อมูลใน services",
+		})
+	}
+
+	// ส่งข้อมูลกลับไปในรูปแบบ JSON
+	return c.JSON(fiber.Map{
+		"visitation":     visitation,
+		"serviceDetails": serviceDetails,
+	})
+}
+
+func GetMonthlySalesCloseReport(c *fiber.Ctx) error {
+	// ดึงเดือนที่เลือกจาก query parameter
+	selectedMonth := c.Query("month") // รูปแบบ "YYYY-MM"
+
+	// Query ดึงข้อมูลยอดขายตามเดือน
+	var report []struct {
+		Date       string  `json:"date"`
+		GameFee    float64 `json:"game_fee"`
+		FoodFee    float64 `json:"food_fee"`
+		DrinkFee   float64 `json:"drink_fee"`
+		Cat4Fee    float64 `json:"cat4_fee"`
+		Cat2Fee    float64 `json:"cat2_fee"`
+		Cat5678Fee float64 `json:"cat5678_fee"`
+		TotalFee   float64 `json:"total_fee"`
+	}
+
+	query := `
+SELECT
+  DATE(datetime(v.start_time, '+7 hours')) AS date,
+  COALESCE(SUM(CASE WHEN s.product_id = 1 THEN s.net_price END), 0)                      AS game_fee,
+  COALESCE(SUM(CASE WHEN p.category_id = 3 THEN s.net_price END), 0)                     AS food_fee,
+  COALESCE(SUM(CASE WHEN p.category_id = 1 THEN s.net_price END), 0)                     AS drink_fee,
+  COALESCE(SUM(CASE WHEN p.category_id = 4 THEN s.net_price END), 0)                     AS cat4_fee,
+  COALESCE(SUM(CASE WHEN p.category_id = 2 THEN s.net_price END), 0)                     AS cat2_fee,
+  COALESCE(SUM(CASE WHEN p.category_id IN (5,6,7,8) THEN s.net_price END), 0)            AS cat5678_fee,
+  COALESCE(SUM(s.net_price), 0)                                                          AS total_fee
+FROM visitations v
+JOIN services s ON v.id = s.visitation_id
+JOIN products p ON p.id = s.product_id
+WHERE 
+  s.deleted_at IS NULL
+  AND (s.status = 'paid' OR s.status = 'draft')
+  AND v.start_time >= ?
+  AND v.start_time < ?
+GROUP BY DATE(datetime(v.start_time, '+7 hours'))
+ORDER BY DATE(datetime(v.start_time, '+7 hours'));
+`
+
+	// แปลง selectedMonth ที่เป็น "YYYY-MM" เพื่อกำหนดช่วงวันที่
+	startOfMonth := selectedMonth + "-01"
+	endOfMonth := selectedMonth + "-31"
+
+	// ส่งค่า startOfMonth และ endOfMonth แทน DATE_FORMAT
+	if err := db.Db.Raw(query, startOfMonth, endOfMonth).Scan(&report).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "ไม่สามารถดึงข้อมูลรายงานรายเดือนได้",
+		})
+	}
+
+	// return c.JSON(report)
+	return c.JSON(fiber.Map{"report": report})
+}
