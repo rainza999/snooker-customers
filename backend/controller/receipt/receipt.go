@@ -70,7 +70,6 @@ func EditReceipt(c *fiber.Ctx) error {
 		"data":    drafts,
 	})
 }
-
 func DraftReceipt(c *fiber.Ctx) error {
 	var drafts []struct {
 		ID                  uint    `json:"id"`
@@ -94,6 +93,7 @@ func DraftReceipt(c *fiber.Ctx) error {
 		`).
 		Joins("JOIN product_receipt_items ON product_receipts.id = product_receipt_items.receipt_id").
 		Where("product_receipts.receipt_status = ?", "draft").
+		Where("product_receipt_items.deleted_at IS NULL").
 		Find(&drafts).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch draft receipts"})
 	}
