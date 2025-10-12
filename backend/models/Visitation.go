@@ -23,6 +23,7 @@ type Visitation struct {
 	VisitDate      time.Time `gorm:"type:datetime"`
 	StartTime      time.Time `gorm:"type:datetime"`
 	EndTime        time.Time `gorm:"type:datetime"`
+	ResumeTime     time.Time `gorm:"type:datetime"`
 	UseTime        time.Time `gorm:"type:datetime"`
 	PauseTime      time.Time `gorm:"type:datetime"`
 	PausedDuration int64     // เก็บระยะเวลาที่หยุดเล่น (หน่วยเป็นวินาที)
@@ -30,6 +31,7 @@ type Visitation struct {
 	NetPrice       float64
 	PaidAmount     float64 // จำนวนเงินที่ลูกค้าชำระมา
 	ChangeAmount   float64 // จำนวนเงินทอน
+	IsRunning      uint8   `gorm:"default:0"` // 🆕 กำลังเล่นอยู่หรือไม่
 	IsPaid         uint8
 	IsActive       uint8 `gorm:"default:1"`
 }

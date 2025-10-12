@@ -51,9 +51,11 @@ func AnyData(c *fiber.Ctx) error {
 		model.SettingTable
 		Status         string    `json:"status"`
 		StartTime      time.Time `json:"start_time"`
+		ResumeTime     time.Time `json:"resume_time"`
 		UseTime        time.Time `json:"use_time"`
 		PauseTime      time.Time `json:"pause_time"`
 		PausedDuration int64     `json:"paused_duration"`
+		IsRunning      uint8     `json:"is_running"`
 		UUID           string    `json:"uuid"`
 		VisitationID   int       `json:"visitation_id"`
 		// Services       []ServiceData `json:"services"` // Services ที่จะรวมเข้าไป
@@ -70,13 +72,15 @@ func AnyData(c *fiber.Ctx) error {
             END as status,
             v.start_time,
             v.use_time,
+			v.resume_time,
             v.paused_duration,
 			v.pause_time,
+			v.is_running,
             v.uuid,
 			v.id as visitation_id
         FROM setting_tables st
         LEFT JOIN visitations v ON st.id = v.table_id AND v.is_active = 1 AND (v.is_paid = 0 OR v.is_paid = 2) AND v.deleted_at IS NULL
-		 WHERE st.division_id = ?
+		 WHERE st.division_id = ? and v.deleted_at is null
     
     `, divisionID).Scan(&tables)
 
@@ -136,14 +140,17 @@ func Store(c *fiber.Ctx) error {
 	}
 
 	if json.Status == "open" {
+		now := time.Now()
 		// สร้าง Visitation ใหม่
 		visitation := model.Visitation{
 			TableID:    json.TableID,
 			DivisionID: 1,
-			VisitDate:  time.Now().Truncate(24 * time.Hour),
-			StartTime:  time.Now(),
-			UseTime:    time.Now(),
-			PauseTime:  time.Now(),
+			VisitDate:  now.Truncate(24 * time.Hour),
+			StartTime:  now,
+			ResumeTime: now,
+			UseTime:    now,
+			IsRunning:  1,
+			PauseTime:  now,
 			TotalCost:  0,
 			NetPrice:   0,
 			IsPaid:     0,
@@ -188,9 +195,11 @@ func Store(c *fiber.Ctx) error {
 			model.SettingTable
 			Status         string    `json:"status"`
 			StartTime      time.Time `json:"start_time"`
+			ResumeTime     time.Time `json:"resume_time"`
 			UseTime        time.Time `json:"use_time"`
 			PauseTime      time.Time `json:"pause_time"`
 			PausedDuration int64     `json:"paused_duration"`
+			IsRunning      uint8     `json:"is_running"`
 			UUID           string    `json:"uuid"`
 			VisitationID   int       `json:"visitation_id"`
 			// Services       []ServiceData `json:"services" gorm:"foreignKey:VisitationID"`
@@ -205,9 +214,11 @@ func Store(c *fiber.Ctx) error {
             ELSE 'closed'
         END as status,
         v.start_time,
+		v.resume_time,
         v.use_time,
         v.paused_duration,
         v.pause_time,
+		v.is_running,
         v.uuid,
         v.id as visitation_id
     FROM setting_tables st
@@ -231,7 +242,11 @@ func Store(c *fiber.Ctx) error {
 		// ปิดโต๊ะที่มีอยู่โดยตั้งค่า is_active = 0
 		result := db.Db.Model(&model.Visitation{}).
 			Where("table_id = ? AND is_active = 1", json.TableID).
-			Update("is_active", 0)
+			Updates(map[string]interface{}{
+				"is_active":  0,
+				"is_running": 0,
+				"end_time":   time.Now(),
+			})
 
 		if result.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
@@ -553,11 +568,15 @@ func GetVisitationByUUID(c *fiber.Ctx) error {
 	return c.JSON(visitation)
 }
 func UpdatePausedDurationTime(c *fiber.Ctx) error {
-	fmt.Println(string(c.Body())) // Log body ที่ส่งเข้ามาเพื่อ debug
+	fmt.Println(string(c.Body())) // log body สำหรับ debug
+
 	var request struct {
 		UUID           string `json:"uuid"`
+		Action         string `json:"action"` // "pause" หรือ "resume"
 		PausedDuration int64  `json:"pausedDuration"`
-		PauseTime      string `json:"pauseTime"`
+		PauseTime      string `json:"pauseTime"`  // สำหรับ pause
+		ResumeTime     string `json:"resumeTime"` // สำหรับ resume
+		UseTime        int64  `json:"useTime"`    // เวลาที่เล่นจริง (วินาที)
 	}
 
 	if err := c.BodyParser(&request); err != nil {
@@ -573,24 +592,48 @@ func UpdatePausedDurationTime(c *fiber.Ctx) error {
 		})
 	}
 
-	if request.PausedDuration == 0 {
-		// User resumed the game
-		// Convert visitation.PausedDuration to time.Duration
-		pausedDuration := time.Duration(visitation.PausedDuration) * time.Second
+	// แยกกรณีตาม Action
+	switch request.Action {
+	case "pause":
+		// 🛑 กรณี Pause
+		pauseTime, _ := time.Parse(time.RFC3339, request.PauseTime)
 
-		// Calculate the actual duration since start_time
-		duration := time.Since(visitation.StartTime)
-		actualDuration := duration - pausedDuration
+		visitation.IsRunning = 0
+		visitation.PauseTime = pauseTime
+		// visitation.UseTime = time.Date(2000, 1, 1, 0, 0, int(request.UseTime), 0, time.UTC)
+		// visitation.PausedDuration = // ใช้เวลาที่เล่นจริง (วินาที)
 
-		// Update PauseTime to reflect the actual pause time in the "2000-01-01 00:00:00" format
-		visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Add(actualDuration)
-		visitation.PausedDuration = 0
-	} else {
-		// User paused the game
-		visitation.PausedDuration = request.PausedDuration
-
-		// Reset PauseTime to "2000-01-01 00:00:00"
+	case "resume":
+		// if visitation.PausedDuration == 0 {
+		visitation.IsRunning = 1
+		visitation.PausedDuration = visitation.PausedDuration + time.Now().Unix() - visitation.PauseTime.Unix()
 		visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+		// }
+		// resumeTime, _ := time.Parse(time.RFC3339, request.ResumeTime)
+
+		/**
+				visitation.PausedDuration = time.Now().Unix() - visitation.PauseTime.Unix()
+		visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+		*/
+		// if !visitation.PauseTime.IsZero() {
+		// 	pausedGap := resumeTime.Sub(visitation.PauseTime).Seconds()
+		// 	visitation.PausedDuration += int64(pausedGap)
+		// }
+
+		// visitation.ResumeTime = resumeTime
+		// visitation.IsRunning = 1
+
+	default:
+		// ถ้าไม่ได้ส่ง action ให้ใช้ fallback เดิม (รองรับเวอร์ชันเก่า)
+		if request.PausedDuration == 0 {
+			visitation.IsRunning = 1
+			visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+			visitation.PausedDuration = 0
+		} else {
+			visitation.IsRunning = 0
+			visitation.PausedDuration = request.PausedDuration
+			visitation.PauseTime = time.Now()
+		}
 	}
 
 	if err := db.Db.Save(&visitation).Error; err != nil {
@@ -600,7 +643,7 @@ func UpdatePausedDurationTime(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"message": "Paused duration updated successfully",
+		"message": fmt.Sprintf("Visitation %s updated successfully", request.Action),
 	})
 }
 
