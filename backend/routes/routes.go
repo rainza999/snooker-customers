@@ -750,6 +750,7 @@ func Setup(app *fiber.App) {
 	suppliers.Post("/store", supplier.Store)
 	suppliers.Get("/:id/edit", supplier.Edit)
 	suppliers.Put("/:id/update", supplier.Update)
+	suppliers.Delete("/:id/delete", supplier.Delete)
 
 	receipts := app.Group("/receipts")
 	receipts.Post("/submit", receipt.SubmitReceipt)

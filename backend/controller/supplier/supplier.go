@@ -1,7 +1,7 @@
 package supplier
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/rainza999/fiber-test/db"
@@ -10,12 +10,8 @@ import (
 )
 
 func AnyData(c *fiber.Ctx) error {
-
-	fmt.Println("hello AnyData Supplier")
 	var lists []model.Supplier
-
-	result := db.Db.Where("is_active = ?", 1).Find(&lists)
-
+	result := db.Db.Find(&lists)
 	if result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
 	}
@@ -107,5 +103,51 @@ func Update(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"message":  "success",
 		"supplier": supplier,
+	})
+}
+
+func Delete(c *fiber.Ctx) error {
+	var supplier model.Supplier
+	supplierID := c.Params("id")
+
+	// 🔍 1. เช็คว่ามี supplier นี้ไหม
+	if err := db.Db.First(&supplier, "id = ?", supplierID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Supplier not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	// 🔍 2. เช็คว่ามีการใช้งาน supplier_id ใน product_receipts หรือไม่
+	var count int64
+	err := db.Db.Table("product_receipts").
+		Where("supplier_id = ? AND deleted_at IS NULL AND is_active = ?", supplierID, true).
+		Count(&count).Error
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to check product_receipts: " + err.Error(),
+		})
+	}
+
+	if count > 0 {
+		// 🚫 ถ้ามีการใช้งาน ห้ามลบ
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Cannot delete supplier — this supplier is still used in active product receipts",
+		})
+	}
+
+	// ✅ 3. Soft Delete supplier ได้เลย
+	if err := db.Db.Delete(&supplier).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Supplier deleted successfully",
 	})
 }
