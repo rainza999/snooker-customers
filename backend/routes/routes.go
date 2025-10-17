@@ -722,19 +722,20 @@ func Setup(app *fiber.App) {
 	productsGroup.Get("/:id/edit", product.Edit)
 	productsGroup.Put("/:id/update", product.Update)
 
-	saleReport := app.Group("/sale-reports")
+	saleReport := app.Group("/sale-reports", checkJWTHeader, middleware.PermissionMiddleware("sale-reports-access"))
 	saleReport.Get("/daily", saleofreport.GetDailySalesReport) // ดึงรายงานแบบวัน
 	saleReport.Get("/monthly", saleofreport.GetMonthlySalesReport)
 	saleReport.Get("/:uuid/daily", saleofreport.GetDailySalesReportDetail)
 
-	saleCloseReport := app.Group("/sale-report-closes")
+	// saleCloseReport := app.Group("/sale-report-closes")
+	saleCloseReport := app.Group("/sale-report-closes", checkJWTHeader, middleware.PermissionMiddleware("sale-report-closes-access"))
 	saleCloseReport.Get("/daily", saleofreport.GetDailySalesCloseReport) // ดึงรายงานแบบวัน
 	saleCloseReport.Get("/monthly", saleofreport.GetMonthlySalesCloseReport)
 	saleCloseReport.Get("/:uuid/daily", saleofreport.GetDailySalesCloseReportDetail)
 
 	// settingPointOfSale := app.Group("/setting-point-of-sales", checkJWTHeader, middleware.PermissionMiddleware("setting-point-of-sale-access"))
 
-	saleProductReport := app.Group("/sale-product-reports", checkJWTHeader, middleware.PermissionMiddleware("sale-report-closes-access"))
+	saleProductReport := app.Group("/sale-product-reports", checkJWTHeader, middleware.PermissionMiddleware("sale-product-reports-access"))
 	saleProductReport.Get("/daily", saleofreport.GetDailySaleProductReport) // ดึงรายงานแบบวัน
 	saleProductReport.Get("/monthly", saleofreport.GetMonthlySaleProductReport)
 	// saleReport.Get("/:uuid/daily/edit", saleofreport.GetDailySalesReportDetailEdit)
