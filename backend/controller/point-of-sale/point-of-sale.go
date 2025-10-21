@@ -793,13 +793,24 @@ func VerifyPasswordAndCloseTable(c *fiber.Ctx) error {
 		})
 	}
 
-	// ถ้ารหัสผ่านถูกต้อง ปิดโต๊ะที่มีอยู่โดยตั้งค่า is_active = 0
+	// 4) ปิดเฉพาะแถวนี้เท่านั้น
+	now := time.Now()
 	result := db.Db.Model(&model.Visitation{}).
-		Where("table_id = ? AND is_active = 1", request.TableID).
-		Update("is_active", 0)
+		Where("table_id = ? AND uuid = ? AND is_active = 1", request.TableID, request.UUIDTable).
+		Updates(map[string]interface{}{
+			"is_active": 0,
+			// "is_running": 0,
+			"end_time": now, // ตั้งเวลาเลิก
+			// "pause_time": time.Time{}, // เคลียร์ pause ถ้าไม่ใช้แล้ว
+			// "closed_by": user.ID,         // ถ้ามีฟิลด์ผู้ปิดให้เก็บไว้ด้วย
+		})
 
 	if result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
+	}
+	if result.RowsAffected == 0 {
+		// กันกรณี race condition: แถวถูกเปลี่ยนสภาพไปก่อนหน้า
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "ไม่สามารถปิดโต๊ะได้ (อาจถูกปิดไปแล้ว)"})
 	}
 
 	return c.JSON(fiber.Map{

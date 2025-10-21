@@ -83,25 +83,29 @@ func GetDailySalesReportDetail(c *fiber.Ctx) error {
 
 	// Query ข้อมูลของบิลจาก table visitations
 	var visitation struct {
-		ID           uint    `json:"id"` // visitation_id เพื่อเอาไปใช้ค้นใน services
-		BillCode     string  `json:"bill_code"`
-		TableID      uint    `json:"table_id"`
-		TableName    string  `json:"table_name"`
-		StartTime    string  `json:"start_time"`
-		EndTime      string  `json:"end_time"`
-		NetPrice     float64 `json:"net_price"`
-		TotalCost    float64 `json:"total_cost"`
-		PaidAmount   float64 `json:"paid_amount"`
-		ChangeAmount float64 `json:"change_amount"`
-		TableType    uint    `json:"table_type"`
-		Price        float64 `json:"price"`
-		Price2       float64 `json:"price2"`
+		ID             uint    `json:"id"` // visitation_id เพื่อเอาไปใช้ค้นใน services
+		BillCode       string  `json:"bill_code"`
+		TableID        uint    `json:"table_id"`
+		TableName      string  `json:"table_name"`
+		StartTime      string  `json:"start_time"`
+		EndTime        string  `json:"end_time"`
+		NetPrice       float64 `json:"net_price"`
+		PausedDuration float64 `json:"paused_duration"`
+		PauseTime      string  `json:"pause_time"`
+		TotalCost      float64 `json:"total_cost"`
+		PaidAmount     float64 `json:"paid_amount"`
+		ChangeAmount   float64 `json:"change_amount"`
+		TableType      uint    `json:"table_type"`
+		Price          float64 `json:"price"`
+		Price2         float64 `json:"price2"`
 	}
 	// Query ข้อมูลจาก table visitations โดยใช้ uuid
 	err := db.Db.Raw(`SELECT visitations.id, bill_code, 
     table_id, start_time, end_time, net_price, total_cost, paid_amount, change_amount, table_type, setting_tables.name as table_name,
     setting_tables.price as price, 
-    setting_tables.price2 as price2
+    setting_tables.price2 as price2,
+	pause_time,
+	paused_duration
 
 
 		FROM visitations left join setting_tables on visitations.table_id = setting_tables.id WHERE uuid = ?`, uuid).Scan(&visitation).Error
@@ -391,41 +395,52 @@ func GetDailySaleProductReport(c *fiber.Ctx) error {
 
 	// 🔨 ประกอบ SQL
 	query := fmt.Sprintf(`
-	SELECT 
-		CASE 
-			WHEN s.product_id = 1 THEN 'ค่าเกมส์'
-			ELSE c.name
-		END AS type_name,
-		CASE 
-			WHEN s.product_id = 1 THEN 
-				st.name || ' (' || 
-				CASE 
-					WHEN v.table_type = 0 THEN 'ปกติ'
-					ELSE 'ซ้อม'
-				END || ')'
-			ELSE p.name
-		END AS product_name,
-		p.price as price_per_unit,
-		SUM(s.sell_quantity) AS qty,
-		SUM(s.net_price) AS net_price
-	FROM 
-		services s
-	LEFT JOIN visitations v ON s.visitation_id = v.id
-	LEFT JOIN setting_tables st ON v.table_id = st.id
-	LEFT JOIN products p ON s.product_id = p.id
-	LEFT JOIN categories c ON p.category_id = c.id
-	WHERE %s
-	GROUP BY 
-		CASE 
-			WHEN s.product_id = 1 THEN v.table_id || '_' || v.table_type
-			ELSE s.product_id
-		END,
-		CASE 
-			WHEN s.product_id = 1 THEN v.table_type
-			ELSE NULL
-		END
-	ORDER BY product_id, type_name, product_name
-	`, strings.Join(filters, " AND "))
+SELECT 
+    CASE 
+        WHEN s.product_id = 1 THEN 'ค่าเกมส์'
+        ELSE c.name
+    END AS type_name,
+    CASE 
+        WHEN s.product_id = 1 THEN 
+            st.name || ' (' || 
+            CASE 
+                WHEN v.table_type = 0 THEN 'ปกติ'
+                ELSE 'ซ้อม'
+            END || ')'
+        ELSE p.name
+    END AS product_name,
+    p.price AS price_per_unit,
+
+    -- 🧮 ถ้าเป็นค่าเกมส์: ใช้เวลาจริงจาก visitation (end_time - start_time - paused_duration)
+    CASE 
+        WHEN s.product_id = 1 THEN 
+            ROUND(SUM(
+                (strftime('%%s', COALESCE(v.end_time, CURRENT_TIMESTAMP)) - strftime('%%s', v.start_time))
+                - COALESCE(v.paused_duration, 0)
+            ) / 60.0, 2)
+        ELSE 
+            SUM(s.sell_quantity)
+    END AS qty,
+
+    SUM(s.net_price) AS net_price
+
+FROM services s
+LEFT JOIN visitations v ON s.visitation_id = v.id
+LEFT JOIN setting_tables st ON v.table_id = st.id
+LEFT JOIN products p ON s.product_id = p.id
+LEFT JOIN categories c ON p.category_id = c.id
+WHERE %s
+GROUP BY 
+    CASE 
+        WHEN s.product_id = 1 THEN v.table_id || '_' || v.table_type
+        ELSE s.product_id
+    END,
+    CASE 
+        WHEN s.product_id = 1 THEN v.table_type
+        ELSE NULL
+    END
+ORDER BY s.product_id, type_name, product_name
+`, strings.Join(filters, " AND "))
 
 	var report []struct {
 		TypeName     string  `json:"type_name"`
