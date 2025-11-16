@@ -98,6 +98,7 @@ func GetDailySalesReportDetail(c *fiber.Ctx) error {
 		TableType      uint    `json:"table_type"`
 		Price          float64 `json:"price"`
 		Price2         float64 `json:"price2"`
+		UseTime        int64   `json:"use_time"`
 	}
 	// Query ข้อมูลจาก table visitations โดยใช้ uuid
 	err := db.Db.Raw(`SELECT visitations.id, bill_code, 
@@ -105,8 +106,8 @@ func GetDailySalesReportDetail(c *fiber.Ctx) error {
     setting_tables.price as price, 
     setting_tables.price2 as price2,
 	pause_time,
-	paused_duration
-
+	paused_duration,
+	use_time
 
 		FROM visitations left join setting_tables on visitations.table_id = setting_tables.id WHERE uuid = ?`, uuid).Scan(&visitation).Error
 
@@ -125,16 +126,34 @@ func GetDailySalesReportDetail(c *fiber.Ctx) error {
 	}
 
 	// Query ข้อมูลจาก services ที่เชื่อมกับ visitation_id และ products
+	// err = db.Db.Raw(`
+	// 	SELECT
+	// 		services.product_id,
+	// 		products.name AS product_name,
+	// 		services.sell_quantity,
+	// 		services.total_cost,
+	// 		services.net_price
+	// 	FROM services
+	// 	LEFT JOIN products ON services.product_id = products.id
+	// 	WHERE services.visitation_id = ? and services.deleted_at is null and services.status = 'paid'`, visitation.ID).Scan(&serviceDetails).Error
+
 	err = db.Db.Raw(`
-		SELECT 
-			services.product_id,
-			products.name AS product_name,
-			services.sell_quantity,
-			services.total_cost,
-			services.net_price
-		FROM services
-		LEFT JOIN products ON services.product_id = products.id
-		WHERE services.visitation_id = ? and services.deleted_at is null and services.status = 'paid'`, visitation.ID).Scan(&serviceDetails).Error
+	SELECT 
+		services.product_id,
+		products.name AS product_name,
+		CASE 
+			WHEN services.product_id = 1 THEN services.use_time
+			ELSE services.sell_quantity
+		END AS sell_quantity,
+		services.total_cost,
+		services.net_price
+	FROM services
+	LEFT JOIN products ON services.product_id = products.id
+	WHERE services.visitation_id = ? 
+	  AND services.deleted_at IS NULL 
+	  AND services.status = 'paid'`,
+		visitation.ID,
+	).Scan(&serviceDetails).Error
 
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -261,7 +280,10 @@ func GetMonthlySaleProductReport(c *fiber.Ctx) error {
 			ELSE p.name
 		END AS product_name,
 		p.price as price_per_unit,
-		SUM(s.sell_quantity) AS qty,
+				CASE 
+			WHEN s.product_id = 1 THEN SUM(v.use_time)       -- 🕒 รวมเวลาทั้งหมดหน่วยวินาที
+			ELSE SUM(s.sell_quantity)
+		END AS qty,
 		SUM(s.net_price) AS net_price
 	FROM 
 		services s
@@ -340,60 +362,6 @@ func GetDailySaleProductReport(c *fiber.Ctx) error {
 		args = append(args, productID)
 	}
 
-	// var report []struct {
-	// 	TypeName     string  `json:"type_name"`      // ประเภท เช่น ค่าเกมส์, อาหาร
-	// 	ProductName  string  `json:"product_name"`   // ชื่อสินค้า หรือชื่อโต๊ะ (กรณี product_id = 1)
-	// 	PricePerUnit float64 `json:"price_per_unit"` // ราคาต่อหน่วย
-	// 	Qty          float64 `json:"qty"`            // จำนวน
-	// 	NetPrice     float64 `json:"net_price"`      // ราคาสุทธิ
-	// }
-
-	// query := `
-	// SELECT
-	// 	CASE
-	// 		WHEN s.product_id = 1 THEN 'ค่าเกมส์'
-	// 		ELSE c.name
-	// 	END AS type_name,
-	// 	CASE
-	// 		WHEN s.product_id = 1 THEN
-	// 			st.name || ' (' ||
-	// 			CASE
-	// 				WHEN v.table_type = 0 THEN 'ปกติ'
-	// 				ELSE 'ซ้อม'
-	// 			END || ')'
-	// 		ELSE p.name
-	// 	END AS product_name,
-	// 	p.price as price_per_unit,
-	// 	SUM(s.sell_quantity) AS qty,
-	// 	SUM(s.net_price) AS net_price
-	// FROM
-	// 	services s
-	// LEFT JOIN
-	// 	visitations v ON s.visitation_id = v.id
-	// LEFT JOIN
-	// 	setting_tables st ON v.table_id = st.id
-	// LEFT JOIN
-	// 	products p ON s.product_id = p.id
-	// LEFT JOIN
-	// 	categories c ON p.category_id = c.id
-	// WHERE
-	// 	s.status = 'paid'
-	// 	AND s.deleted_at IS NULL
-	// 	AND v.start_time BETWEEN ? AND ?
-	// GROUP BY
-	// 	CASE
-	// 		WHEN s.product_id = 1 THEN v.table_id || '_' || v.table_type
-	// 		ELSE s.product_id
-	// 	END,
-	// 	CASE
-	// 		WHEN s.product_id = 1 THEN v.table_type
-	// 		ELSE NULL
-	// 	END
-	// ORDER BY
-	// 	product_id, type_name, product_name
-	// `
-
-	// 🔨 ประกอบ SQL
 	query := fmt.Sprintf(`
 SELECT 
     CASE 
@@ -410,17 +378,12 @@ SELECT
         ELSE p.name
     END AS product_name,
     p.price AS price_per_unit,
-
-    -- 🧮 ถ้าเป็นค่าเกมส์: ใช้เวลาจริงจาก visitation (end_time - start_time - paused_duration)
-    CASE 
-        WHEN s.product_id = 1 THEN 
-            ROUND(SUM(
-                (strftime('%%s', COALESCE(v.end_time, CURRENT_TIMESTAMP)) - strftime('%%s', v.start_time))
-                - COALESCE(v.paused_duration, 0)
-            ) / 60.0, 2)
-        ELSE 
-            SUM(s.sell_quantity)
-    END AS qty,
+CASE 
+    WHEN s.product_id = 1 THEN 
+        ROUND(SUM(v.use_time), 2)
+    ELSE 
+        SUM(s.sell_quantity)
+END AS qty,
 
     SUM(s.net_price) AS net_price
 
@@ -455,13 +418,6 @@ ORDER BY s.product_id, type_name, product_name
 			"error": "ไม่สามารถดึงข้อมูลรายงานรายวันได้",
 		})
 	}
-	// // ส่งค่า startOfMonth และ endOfMonth ที่คำนวณได้
-	// if err := db.Db.Raw(query, startDate, endDate).Scan(&report).Error; err != nil {
-	// 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-	// 		"error": "ไม่สามารถดึงข้อมูลรายงานรายเดือนได้",
-	// 	})
-	// }
-
 	return c.JSON(fiber.Map{"report": report})
 }
 

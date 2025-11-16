@@ -24,7 +24,7 @@ type Visitation struct {
 	StartTime      time.Time `gorm:"type:datetime"`
 	EndTime        time.Time `gorm:"type:datetime"`
 	ResumeTime     time.Time `gorm:"type:datetime"`
-	UseTime        time.Time `gorm:"type:datetime"`
+	UseTime        int64
 	PauseTime      time.Time `gorm:"type:datetime"`
 	PausedDuration int64     // เก็บระยะเวลาที่หยุดเล่น (หน่วยเป็นวินาที)
 	TotalCost      float64
@@ -69,7 +69,7 @@ func (v *Visitation) BeforeCreate(tx *gorm.DB) (err error) {
 	// Set default values
 	v.VisitDate = time.Now().Truncate(24 * time.Hour)
 	v.StartTime = time.Now()
-	v.UseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)   // ตั้งค่าปีเป็นปีที่เหมาะสม
+	v.UseTime = 0                                             // ตั้งค่าปีเป็นปีที่เหมาะสม
 	v.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC) // ตั้งค่าปีเป็นปีที่เหมาะสม
 	v.TotalCost = 0
 	v.NetPrice = 0

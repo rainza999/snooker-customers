@@ -16,7 +16,7 @@ type Service struct {
 	TotalFIFO_Cost float64        `gorm:"not null;default:0"`
 	NetPrice       float64        `gorm:"not null"`
 	Status         string         `gorm:"type:varchar(50);default:'draft'"`
-	UseTime        time.Time      `gorm:""` // ฟิลด์ใหม่เพื่อเก็บ UseTime จาก Visitation
+	UseTime        int64          // ฟิลด์ใหม่เพื่อเก็บ UseTime จาก Visitation
 	CreatedAt      time.Time      `gorm:"autoCreateTime"`
 	UpdatedAt      time.Time      `gorm:"autoUpdateTime"`
 	DeletedAt      gorm.DeletedAt `gorm:"index"`

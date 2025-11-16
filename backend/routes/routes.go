@@ -696,7 +696,7 @@ func Setup(app *fiber.App) {
 	})
 	pointofsalesGroup.Get("/anyData", pointofsale.AnyData)
 	pointofsalesGroup.Post("/store/visitation", pointofsale.Store)
-	pointofsalesGroup.Post("/api/updateUseTime", pointofsale.UpdateUseTime)
+	// pointofsalesGroup.Post("/api/updateUseTime", pointofsale.UpdateUseTime)
 	pointofsalesGroup.Post("/api/verify-password", pointofsale.VerifyPassword)
 	pointofsalesGroup.Post("/api/verify-password-and-close-table", pointofsale.VerifyPasswordAndCloseTable)
 	pointofsalesGroup.Post("/api/updatePausedDurationTime", pointofsale.UpdatePausedDurationTime)

@@ -52,7 +52,7 @@ func AnyData(c *fiber.Ctx) error {
 		Status         string    `json:"status"`
 		StartTime      time.Time `json:"start_time"`
 		ResumeTime     time.Time `json:"resume_time"`
-		UseTime        time.Time `json:"use_time"`
+		UseTime        int64     `json:"use_time"`
 		PauseTime      time.Time `json:"pause_time"`
 		PausedDuration int64     `json:"paused_duration"`
 		IsRunning      uint8     `json:"is_running"`
@@ -148,7 +148,7 @@ func Store(c *fiber.Ctx) error {
 			VisitDate:  now.Truncate(24 * time.Hour),
 			StartTime:  now,
 			ResumeTime: now,
-			UseTime:    now,
+			UseTime:    0,
 			IsRunning:  1,
 			PauseTime:  now,
 			TotalCost:  0,
@@ -183,7 +183,7 @@ func Store(c *fiber.Ctx) error {
 			TotalFIFO_Cost: settingTable.Price,
 			TotalCost:      settingTable.Price, // คำนวณราคาจากราคาปกติ
 			NetPrice:       settingTable.Price, // ยังไม่มีการหักส่วนลด
-			UseTime:        visitation.UseTime, // เก็บ UseTime จาก Visitation
+			UseTime:        0,                  // เก็บ UseTime จาก Visitation
 			Status:         "draft",
 		}
 
@@ -196,7 +196,7 @@ func Store(c *fiber.Ctx) error {
 			Status         string    `json:"status"`
 			StartTime      time.Time `json:"start_time"`
 			ResumeTime     time.Time `json:"resume_time"`
-			UseTime        time.Time `json:"use_time"`
+			UseTime        int64     `json:"use_time"`
 			PauseTime      time.Time `json:"pause_time"`
 			PausedDuration int64     `json:"paused_duration"`
 			IsRunning      uint8     `json:"is_running"`
@@ -260,31 +260,31 @@ func Store(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Invalid status"})
 }
 
-type UpdateUseTimeBody struct {
-	UUID string `json:"uuid"`
-}
+// type UpdateUseTimeBody struct {
+// 	UUID string `json:"uuid"`
+// }
 
-func UpdateUseTime(c *fiber.Ctx) error {
-	var json UpdateUseTimeBody
+// func UpdateUseTime(c *fiber.Ctx) error {
+// 	var json UpdateUseTimeBody
 
-	if err := c.BodyParser(&json); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Invalid request body",
-		})
-	}
+// 	if err := c.BodyParser(&json); err != nil {
+// 		return c.Status(400).JSON(fiber.Map{
+// 			"error": "Invalid request body",
+// 		})
+// 	}
 
-	var visitation model.Visitation
-	if err := db.Db.Where("uuid = ?", json.UUID).First(&visitation).Error; err != nil {
-		return c.Status(404).JSON(fiber.Map{"error": "Record not found"})
-	}
+// 	var visitation model.Visitation
+// 	if err := db.Db.Where("uuid = ?", json.UUID).First(&visitation).Error; err != nil {
+// 		return c.Status(404).JSON(fiber.Map{"error": "Record not found"})
+// 	}
 
-	visitation.UseTime = visitation.UseTime.Add(time.Minute)
-	if err := db.Db.Save(&visitation).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-	}
+// 	visitation.UseTime = visitation.UseTime.Add(time.Minute)
+// 	if err := db.Db.Save(&visitation).Error; err != nil {
+// 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+// 	}
 
-	return c.JSON(fiber.Map{"message": "UseTime updated successfully"})
-}
+// 	return c.JSON(fiber.Map{"message": "UseTime updated successfully"})
+// }
 
 type ServiceData struct {
 	ProductID    int     `json:"product_id"`
@@ -397,6 +397,44 @@ func PaymentStore(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "Record not found"})
 	}
 
+	// ✅ ถ้าโต๊ะหยุด (is_running == 0) ให้ resume
+	if visitation.IsRunning == 0 {
+		if !visitation.PauseTime.IsZero() {
+			resumeTime := time.Now()
+			pausedGap := resumeTime.Sub(visitation.PauseTime).Seconds()
+			visitation.PausedDuration += int64(pausedGap)
+			visitation.IsRunning = 1
+			visitation.ResumeTime = resumeTime
+			visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC) // reset pause_time
+		}
+	}
+
+	// ✅ คำนวณเวลาการใช้งานจริง (ไม่ปัด)
+	var elapsedTime float64
+	startTime := visitation.StartTime
+	now := time.Now()
+
+	if !startTime.IsZero() {
+		elapsedTime = now.Sub(startTime).Seconds()
+
+		// ถ้ามี paused_duration ให้หักออก
+		if visitation.PausedDuration > 0 {
+			elapsedTime -= float64(visitation.PausedDuration)
+		}
+
+		// ถ้ายัง pause อยู่ ใช้เวลาถึง pause_time
+		if !visitation.PauseTime.IsZero() && visitation.PauseTime.Year() != 2000 {
+			elapsedTime = visitation.PauseTime.Sub(startTime).Seconds() - float64(visitation.PausedDuration)
+		}
+	}
+
+	if elapsedTime < 0 {
+		elapsedTime = 0
+	}
+
+	// ✅ เก็บ use_time เป็นวินาที (ตามจริง)
+	visitation.UseTime = int64(elapsedTime)
+
 	// ตรวจสอบว่า visitation มี BillCode หรือยัง
 	if visitation.BillCode == "" {
 		// ค้นหา Division เพื่อนำ Code มาใช้
@@ -483,6 +521,14 @@ func PaymentStore(c *fiber.Ctx) error {
 	}
 
 	// อัปเดตหรือเพิ่ม service ที่เกี่ยวข้อง
+	if err := db.Db.Model(&model.Service{}).
+		Where("visitation_id = ? AND product_id = ?", visitation.ID, 1).
+		Updates(map[string]interface{}{
+			"use_time": visitation.UseTime,
+			"status":   "paid",
+		}).Error; err != nil {
+		log.Printf("⚠️ Failed to update service (product_id=1): %v", err)
+	}
 	for _, serviceData := range paymentData.Services {
 		var service model.Service
 		// ตรวจสอบว่ามี service สำหรับ product_id นั้นๆ อยู่หรือไม่
@@ -772,12 +818,6 @@ func VerifyPasswordAndCloseTable(c *fiber.Ctx) error {
 			"message": "Invalid password",
 		})
 	}
-	// if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(request.Password)); err != nil {
-	// 	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-	// 		"success": false,
-	// 		"message": "Invalid password",
-	// 	})
-	// }
 
 	// ✅ ตรวจสอบว่ามีโต๊ะที่ยังเปิดอยู่หรือไม่ และเช็คค่า is_paid
 	var visitation model.Visitation
@@ -799,10 +839,7 @@ func VerifyPasswordAndCloseTable(c *fiber.Ctx) error {
 		Where("table_id = ? AND uuid = ? AND is_active = 1", request.TableID, request.UUIDTable).
 		Updates(map[string]interface{}{
 			"is_active": 0,
-			// "is_running": 0,
-			"end_time": now, // ตั้งเวลาเลิก
-			// "pause_time": time.Time{}, // เคลียร์ pause ถ้าไม่ใช้แล้ว
-			// "closed_by": user.ID,         // ถ้ามีฟิลด์ผู้ปิดให้เก็บไว้ด้วย
+			"end_time":  now, // ตั้งเวลาเลิก
 		})
 
 	if result.Error != nil {
