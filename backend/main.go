@@ -52,6 +52,7 @@ func main() {
 	// MigrateSupplierProductReceiptProductReceiptItem()
 	// MigrateProductReceiptProductReceiptItem()
 	// MigrateEmployeeAndUserData()
+	// MigrateCompany(db.Db)
 	// MigrateDivision(db.Db)
 	// MigrateMenuAndPermissionData()
 	// MigrateRole()
@@ -586,6 +587,30 @@ func MigrateProduct(db *gorm.DB) {
 func MigrateSettingTable(db *gorm.DB) {
 	db.AutoMigrate(&model.SettingTable{})
 	fmt.Println("setting_tables table migrated successfully")
+}
+
+func MigrateCompany(db *gorm.DB) {
+	db.AutoMigrate(&model.Company{})
+	fmt.Println("companies table migrated successfully")
+
+	companies := []struct {
+		Company model.Company
+	}{
+		{
+			Company: model.Company{
+				Name: "ห้างหุ้นส่วนจำกัด โอเอ็ม สนุ๊กเกอร์ คลับ", Status: "active",
+			},
+		}, {
+			Company: model.Company{
+				Name: "ช. ช้าง สนุ๊กเกอร์คลับ", Status: "active",
+			},
+		},
+	}
+
+	for _, item := range companies {
+		db.Create(&item.Company)
+	}
+	fmt.Println("Companies data migrated successfully")
 }
 
 func MigrateDivision(db *gorm.DB) {

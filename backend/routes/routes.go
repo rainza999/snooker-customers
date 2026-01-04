@@ -745,6 +745,7 @@ func Setup(app *fiber.App) {
 	settingSystem := app.Group("/setting-systems")
 	settingSystem.Put("/update", settingsystem.SaveSettingSystem)
 	settingSystem.Get("/:id/data", settingsystem.GetSettingSystem)
+	settingSystem.Get("/company/1", settingsystem.AnydataCompany)
 
 	suppliers := app.Group("/suppliers")
 	suppliers.Get("/anyData", supplier.AnyData)

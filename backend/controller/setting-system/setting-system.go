@@ -21,6 +21,14 @@ func GetSettingSystem(c *fiber.Ctx) error {
 
 	return c.JSON(setting) // ส่งข้อมูล setting กลับไป
 }
+func AnydataCompany(c *fiber.Ctx) error {
+	var companies []model.Company
+
+	if err := db.Db.Where("is_active = ?", 1).Where("id = ?", 1).Find(&companies).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve companies"})
+	}
+	return c.JSON(companies)
+}
 func SaveSettingSystem(c *fiber.Ctx) error {
 	var setting model.SettingSystem
 

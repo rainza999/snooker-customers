@@ -4,6 +4,7 @@ import (
 	"errors" // สำหรับการใช้งาน errors.Is
 	"fmt"
 	"log"
+	"math"
 	"os/exec"
 	"strconv"
 	"time"
@@ -835,12 +836,103 @@ func VerifyPasswordAndCloseTable(c *fiber.Ctx) error {
 
 	// 4) ปิดเฉพาะแถวนี้เท่านั้น
 	now := time.Now()
+
+	// ✅ ถ้าโต๊ะหยุด (is_running == 0) ให้ resume
+	if visitation.IsRunning == 0 {
+		if !visitation.PauseTime.IsZero() {
+			resumeTime := time.Now()
+			pausedGap := resumeTime.Sub(visitation.PauseTime).Seconds()
+			visitation.PausedDuration += int64(pausedGap)
+			visitation.IsRunning = 1
+			visitation.ResumeTime = resumeTime
+			visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC) // reset pause_time
+		}
+	}
+
+	// ✅ คำนวณเวลาการใช้งานจริง (ไม่ปัด)
+	var elapsedTime float64
+	startTime := visitation.StartTime
+
+	if !startTime.IsZero() {
+		elapsedTime = now.Sub(startTime).Seconds()
+
+		// ถ้ามี paused_duration ให้หักออก
+		if visitation.PausedDuration > 0 {
+			elapsedTime -= float64(visitation.PausedDuration)
+		}
+
+		// ถ้ายัง pause อยู่ ใช้เวลาถึง pause_time
+		if !visitation.PauseTime.IsZero() && visitation.PauseTime.Year() != 2000 {
+			elapsedTime = visitation.PauseTime.Sub(startTime).Seconds() - float64(visitation.PausedDuration)
+		}
+	}
+
+	if elapsedTime < 0 {
+		elapsedTime = 0
+	}
+
+	// ✅ เก็บ use_time เป็นวินาที (ตามจริง)
+	visitation.UseTime = int64(elapsedTime)
+
 	result := db.Db.Model(&model.Visitation{}).
 		Where("table_id = ? AND uuid = ? AND is_active = 1", request.TableID, request.UUIDTable).
 		Updates(map[string]interface{}{
 			"is_active": 0,
 			"end_time":  now, // ตั้งเวลาเลิก
+			"use_time":  visitation.UseTime,
 		})
+
+		// 🟦 ดึงข้อมูล SettingTable เพื่อดูราคา
+	var table model.SettingTable
+	if err := db.Db.First(&table, request.TableID).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Table not found"})
+	}
+
+	var service model.Service
+	result2 := db.Db.Where("visitation_id = ? AND product_id = 1 AND deleted_at IS NULL",
+		visitation.ID).First(&service)
+
+	if result2.Error != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Service not found"})
+	}
+
+	// 🟦 คำนวณราคาใหม่ตามเวลา
+	isDiscounted := false
+	fee := CalculateGameFee(visitation.UseTime, table.Price, table.Price2, isDiscounted)
+
+	// 🟦 อัปเดตข้อมูลใน services
+	db.Db.Model(&service).Updates(map[string]interface{}{
+		"sell_quantity": float64(visitation.UseTime),
+		"total_cost":    fee,
+		"net_price":     fee,
+	})
+	// const calculateGameFee = (timeInSeconds, price, price2, isDiscounted) => {
+	//     console.log("Calculating game fee with:", {
+	//         timeInSeconds,
+	//         price,
+	//         price2,
+	//         isDiscounted,
+	//     });
+	//     const ratePerHour = isDiscounted ? price2 : price;
+	//     const ratePerMinute = ratePerHour / 60;
+
+	//     const totalMinutes = Math.ceil(timeInSeconds / 60);
+
+	//     let fee = 0;
+
+	//     if (totalMinutes <= 30) {
+	//         fee = ratePerMinute * 30; // คิดขั้นต่ำ 30 นาที
+	//     } else if (totalMinutes <= 60) {
+	//         fee = ratePerHour; // คิดเป็น 1 ชั่วโมง
+	//     } else {
+	//         const extraMinutes = totalMinutes - 60;
+	//         fee = ratePerHour + extraMinutes * ratePerMinute; // คิดเกิน 1 ชั่วโมงเป็นนาที
+	//     }
+
+	//     fee = Math.round(fee * 100) / 100; // ปัดเป็น 2 ตำแหน่งทศนิยม
+	//     return Math.ceil(fee); // ปัดขึ้นเป็นจำนวนเต็ม
+	// };
+	//อยากให้ update product_id = 1 ใน services ด้วย โดยที่คิด totalcost กับ netprice ใหม่ตาม use_time
 
 	if result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
@@ -1262,4 +1354,27 @@ func ChangeTable(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Table changed successfully"})
+}
+
+func CalculateGameFee(timeInSeconds int64, price float64, price2 float64, isDiscounted bool) float64 {
+	ratePerHour := price
+	if isDiscounted {
+		ratePerHour = price2
+	}
+
+	ratePerMinute := ratePerHour / 60
+	totalMinutes := int(math.Ceil(float64(timeInSeconds) / 60))
+
+	var fee float64
+
+	if totalMinutes <= 30 {
+		fee = ratePerMinute * 30
+	} else if totalMinutes <= 60 {
+		fee = ratePerHour
+	} else {
+		extraMinutes := totalMinutes - 60
+		fee = ratePerHour + float64(extraMinutes)*ratePerMinute
+	}
+
+	return math.Ceil(fee) // ปัดขึ้น
 }

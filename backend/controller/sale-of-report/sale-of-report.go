@@ -508,25 +508,31 @@ func GetDailySalesCloseReportDetail(c *fiber.Ctx) error {
 
 	// Query ข้อมูลของบิลจาก table visitations
 	var visitation struct {
-		ID           uint    `json:"id"` // visitation_id เพื่อเอาไปใช้ค้นใน services
-		BillCode     string  `json:"bill_code"`
-		TableID      uint    `json:"table_id"`
-		TableName    string  `json:"table_name"`
-		StartTime    string  `json:"start_time"`
-		EndTime      string  `json:"end_time"`
-		NetPrice     float64 `json:"net_price"`
-		TotalCost    float64 `json:"total_cost"`
-		PaidAmount   float64 `json:"paid_amount"`
-		ChangeAmount float64 `json:"change_amount"`
-		TableType    uint    `json:"table_type"`
-		Price        float64 `json:"price"`
-		Price2       float64 `json:"price2"`
+		ID             uint    `json:"id"` // visitation_id เพื่อเอาไปใช้ค้นใน services
+		BillCode       string  `json:"bill_code"`
+		TableID        uint    `json:"table_id"`
+		TableName      string  `json:"table_name"`
+		StartTime      string  `json:"start_time"`
+		EndTime        string  `json:"end_time"`
+		NetPrice       float64 `json:"net_price"`
+		PausedDuration float64 `json:"paused_duration"`
+		PauseTime      string  `json:"pause_time"`
+		TotalCost      float64 `json:"total_cost"`
+		PaidAmount     float64 `json:"paid_amount"`
+		ChangeAmount   float64 `json:"change_amount"`
+		TableType      uint    `json:"table_type"`
+		Price          float64 `json:"price"`
+		Price2         float64 `json:"price2"`
+		UseTime        int64   `json:"use_time"`
 	}
 	// Query ข้อมูลจาก table visitations โดยใช้ uuid
 	err := db.Db.Raw(`SELECT visitations.id, bill_code, 
     table_id, start_time, end_time, net_price, total_cost, paid_amount, change_amount, table_type, setting_tables.name as table_name,
     setting_tables.price as price, 
-    setting_tables.price2 as price2
+    setting_tables.price2 as price2,
+	pause_time,
+	paused_duration,
+	use_time
 
 
 		FROM visitations left join setting_tables on visitations.table_id = setting_tables.id WHERE uuid = ?`, uuid).Scan(&visitation).Error

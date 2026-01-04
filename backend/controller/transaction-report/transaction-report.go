@@ -131,7 +131,7 @@ func SearchProductTransactions(c *fiber.Ctx) error {
 		WHERE substr(v.visit_date, 1, 10) >= ?
 			AND substr(v.visit_date, 1, 10) < ?
 			AND s.deleted_at IS NULL
-			AND s.status = 'paid'
+			AND (s.status = 'paid' or s.status = 'draft')
 			AND v.deleted_at IS NULL
 			AND s.product_id = ?
 	`, firstStockDate, firstDayOfMonth, pid).Scan(&sellSummary).Error
