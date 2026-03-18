@@ -15,6 +15,7 @@ services:
             - /etc/letsencrypt:/etc/letsencrypt:ro # ใช้ cert จริง
             - ./frontend:/usr/share/nginx/html:ro
             - ./data/uploads:/srv/uploads:ro
+            - ./nginx/certs:/etc/nginx/certs:ro
         depends_on:
             - golang-demo1
         networks:
