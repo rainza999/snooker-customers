@@ -614,16 +614,97 @@ func GetVisitationByUUID(c *fiber.Ctx) error {
 	// ส่งข้อมูล visitation กลับไปยัง frontend
 	return c.JSON(visitation)
 }
+
+// func UpdatePausedDurationTime(c *fiber.Ctx) error {
+// 	fmt.Println(string(c.Body())) // log body สำหรับ debug
+
+// 	var request struct {
+// 		UUID           string `json:"uuid"`
+// 		Action         string `json:"action"` // "pause" หรือ "resume"
+// 		PausedDuration int64  `json:"pausedDuration"`
+// 		PauseTime      string `json:"pauseTime"`  // สำหรับ pause
+// 		ResumeTime     string `json:"resumeTime"` // สำหรับ resume
+// 		UseTime        int64  `json:"useTime"`    // เวลาที่เล่นจริง (วินาที)
+// 	}
+
+// 	if err := c.BodyParser(&request); err != nil {
+// 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+// 			"error": "Cannot parse JSON",
+// 		})
+// 	}
+
+// 	var visitation model.Visitation
+// 	if err := db.Db.Where("uuid = ?", request.UUID).First(&visitation).Error; err != nil {
+// 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+// 			"error": "Visitation not found",
+// 		})
+// 	}
+
+// 	// แยกกรณีตาม Action
+// 	switch request.Action {
+// 	case "pause":
+// 		// 🛑 กรณี Pause
+// 		pauseTime, _ := time.Parse(time.RFC3339, request.PauseTime)
+
+// 		visitation.IsRunning = 0
+// 		visitation.PauseTime = pauseTime
+// 		// visitation.UseTime = time.Date(2000, 1, 1, 0, 0, int(request.UseTime), 0, time.UTC)
+// 		// visitation.PausedDuration = // ใช้เวลาที่เล่นจริง (วินาที)
+
+// 	case "resume":
+// 		// if visitation.PausedDuration == 0 {
+// 		visitation.IsRunning = 1
+// 		visitation.PausedDuration = visitation.PausedDuration + time.Now().Unix() - visitation.PauseTime.Unix()
+// 		visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+// 		// }
+// 		// resumeTime, _ := time.Parse(time.RFC3339, request.ResumeTime)
+
+// 		/**
+// 				visitation.PausedDuration = time.Now().Unix() - visitation.PauseTime.Unix()
+// 		visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+// 		*/
+// 		// if !visitation.PauseTime.IsZero() {
+// 		// 	pausedGap := resumeTime.Sub(visitation.PauseTime).Seconds()
+// 		// 	visitation.PausedDuration += int64(pausedGap)
+// 		// }
+
+// 		// visitation.ResumeTime = resumeTime
+// 		// visitation.IsRunning = 1
+
+// 	default:
+// 		// ถ้าไม่ได้ส่ง action ให้ใช้ fallback เดิม (รองรับเวอร์ชันเก่า)
+// 		if request.PausedDuration == 0 {
+// 			visitation.IsRunning = 1
+// 			visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+// 			visitation.PausedDuration = 0
+// 		} else {
+// 			visitation.IsRunning = 0
+// 			visitation.PausedDuration = request.PausedDuration
+// 			visitation.PauseTime = time.Now()
+// 		}
+// 	}
+
+// 	if err := db.Db.Save(&visitation).Error; err != nil {
+// 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+// 			"error": "Failed to update visitation",
+// 		})
+// 	}
+
+// 	return c.JSON(fiber.Map{
+// 		"message": fmt.Sprintf("Visitation %s updated successfully", request.Action),
+// 	})
+// }
+
 func UpdatePausedDurationTime(c *fiber.Ctx) error {
-	fmt.Println(string(c.Body())) // log body สำหรับ debug
+	fmt.Println(string(c.Body()))
 
 	var request struct {
 		UUID           string `json:"uuid"`
-		Action         string `json:"action"` // "pause" หรือ "resume"
+		Action         string `json:"action"`
 		PausedDuration int64  `json:"pausedDuration"`
-		PauseTime      string `json:"pauseTime"`  // สำหรับ pause
-		ResumeTime     string `json:"resumeTime"` // สำหรับ resume
-		UseTime        int64  `json:"useTime"`    // เวลาที่เล่นจริง (วินาที)
+		PauseTime      string `json:"pauseTime"`
+		ResumeTime     string `json:"resumeTime"`
+		UseTime        int64  `json:"useTime"`
 	}
 
 	if err := c.BodyParser(&request); err != nil {
@@ -639,48 +720,55 @@ func UpdatePausedDurationTime(c *fiber.Ctx) error {
 		})
 	}
 
-	// แยกกรณีตาม Action
+	sentinelPauseTime := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
 	switch request.Action {
 	case "pause":
-		// 🛑 กรณี Pause
-		pauseTime, _ := time.Parse(time.RFC3339, request.PauseTime)
+		pauseTime, err := time.Parse(time.RFC3339, request.PauseTime)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid pauseTime format",
+			})
+		}
 
 		visitation.IsRunning = 0
 		visitation.PauseTime = pauseTime
-		// visitation.UseTime = time.Date(2000, 1, 1, 0, 0, int(request.UseTime), 0, time.UTC)
-		// visitation.PausedDuration = // ใช้เวลาที่เล่นจริง (วินาที)
+
+		// เก็บ use time จริงตอนกด pause/check bill
+		if request.UseTime >= 0 {
+			visitation.UseTime = request.UseTime
+		}
+
+		// อย่าไป reset pausedDuration ทิ้ง
+		if request.PausedDuration >= 0 {
+			visitation.PausedDuration = request.PausedDuration
+		}
 
 	case "resume":
-		// if visitation.PausedDuration == 0 {
+		resumeTime, err := time.Parse(time.RFC3339, request.ResumeTime)
+		if err != nil {
+			resumeTime = time.Now()
+		}
+
+		// คิด paused duration เฉพาะตอนที่มัน pause อยู่จริงเท่านั้น
+		if visitation.IsRunning == 0 &&
+			!visitation.PauseTime.IsZero() &&
+			visitation.PauseTime.After(sentinelPauseTime) {
+
+			pausedGap := int64(resumeTime.Sub(visitation.PauseTime).Seconds())
+			if pausedGap < 0 {
+				pausedGap = 0
+			}
+			visitation.PausedDuration += pausedGap
+		}
+
 		visitation.IsRunning = 1
-		visitation.PausedDuration = visitation.PausedDuration + time.Now().Unix() - visitation.PauseTime.Unix()
-		visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-		// }
-		// resumeTime, _ := time.Parse(time.RFC3339, request.ResumeTime)
-
-		/**
-				visitation.PausedDuration = time.Now().Unix() - visitation.PauseTime.Unix()
-		visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-		*/
-		// if !visitation.PauseTime.IsZero() {
-		// 	pausedGap := resumeTime.Sub(visitation.PauseTime).Seconds()
-		// 	visitation.PausedDuration += int64(pausedGap)
-		// }
-
-		// visitation.ResumeTime = resumeTime
-		// visitation.IsRunning = 1
+		visitation.PauseTime = sentinelPauseTime
 
 	default:
-		// ถ้าไม่ได้ส่ง action ให้ใช้ fallback เดิม (รองรับเวอร์ชันเก่า)
-		if request.PausedDuration == 0 {
-			visitation.IsRunning = 1
-			visitation.PauseTime = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-			visitation.PausedDuration = 0
-		} else {
-			visitation.IsRunning = 0
-			visitation.PausedDuration = request.PausedDuration
-			visitation.PauseTime = time.Now()
-		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid action",
+		})
 	}
 
 	if err := db.Db.Save(&visitation).Error; err != nil {
@@ -690,7 +778,11 @@ func UpdatePausedDurationTime(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"message": fmt.Sprintf("Visitation %s updated successfully", request.Action),
+		"message":         fmt.Sprintf("Visitation %s updated successfully", request.Action),
+		"paused_duration": visitation.PausedDuration,
+		"is_running":      visitation.IsRunning,
+		"pause_time":      visitation.PauseTime,
+		"use_time":        visitation.UseTime,
 	})
 }
 
@@ -1255,6 +1347,15 @@ func OrderStore(c *fiber.Ctx) error {
 }
 
 func CalculateFIFO(productId uint, quantity int, db *gorm.DB) (float64, error) {
+	shouldCutStock, err := ShouldManageStock(productId, db)
+	if err != nil {
+		return 0, err
+	}
+
+	// ถ้า category ไม่ได้เปิดใช้ stock → ไม่ต้องตัด stock จริง
+	if !shouldCutStock {
+		return 0, nil
+	}
 	var totalFIFO_Cost float64
 	remainingQty := quantity
 
@@ -1289,6 +1390,15 @@ func CalculateFIFO(productId uint, quantity int, db *gorm.DB) (float64, error) {
 	return totalFIFO_Cost, nil
 }
 func ReturnStockFIFO(productId uint, quantity int, db *gorm.DB) (float64, error) {
+	shouldCutStock, err := ShouldManageStock(productId, db)
+	if err != nil {
+		return 0, err
+	}
+
+	// ถ้า product นี้ไม่ใช่ stock item ก็ไม่ต้องคืน stock
+	if !shouldCutStock {
+		return 0, nil
+	}
 	remainingQty := quantity
 	totalReturnedCost := 0.0
 
@@ -1377,4 +1487,22 @@ func CalculateGameFee(timeInSeconds int64, price float64, price2 float64, isDisc
 	}
 
 	return math.Ceil(fee) // ปัดขึ้น
+}
+
+func ShouldManageStock(productID uint, tx *gorm.DB) (bool, error) {
+	var result struct {
+		IsStock uint8 `gorm:"column:is_stock"`
+	}
+
+	err := tx.Table("products p").
+		Select("COALESCE(c.is_stock, 0) as is_stock").
+		Joins("LEFT JOIN categories c ON c.id = p.category_id").
+		Where("p.id = ?", productID).
+		Scan(&result).Error
+
+	if err != nil {
+		return false, err
+	}
+
+	return result.IsStock == 1, nil
 }
