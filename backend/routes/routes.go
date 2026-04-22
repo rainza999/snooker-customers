@@ -469,6 +469,59 @@ func verifyJWT(c *fiber.Ctx) error {
 //		// กรณีไม่ตรงค่าที่คาดหวัง
 //		return c.Status(fiber.StatusUnauthorized).SendString("Unauthorized: Invalid token")
 //	}
+// func checkJWTHeader(c *fiber.Ctx) error {
+// 	authHeader := c.Get("Authorization")
+// 	log.Println("Authorization XXX Header:", authHeader)
+
+// 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+// 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+// 			"authenticated": false,
+// 			"message":       "Unauthorized: Missing token header",
+// 		})
+// 	}
+
+// 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+// 	log.Println("Parsed Token String:", tokenStr)
+
+// 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+// 		// ✅ ป้องกัน alg spoofing
+// 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+// 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+// 		}
+// 		return []byte("my-secret-key"), nil
+// 	})
+
+// 	if err != nil || !token.Valid {
+// 		log.Printf("❌ Invalid token. Error: %v, Token valid: %v\n", err, token.Valid)
+// 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+// 			"authenticated": false,
+// 			"message":       fmt.Sprintf("Unauthorized: Invalid token. Error: %v", err),
+// 		})
+// 	}
+
+// 	claims, ok := token.Claims.(jwt.MapClaims)
+// 	if !ok {
+// 		log.Println("❌ Invalid claims")
+// 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+// 			"authenticated": false,
+// 			"message":       "Unauthorized: Invalid claims",
+// 		})
+// 	}
+
+// 	// ✅ Debug claims
+// 	log.Printf("✅ Token Claims: %+v\n", claims)
+
+// 	// ✅ เก็บลง context
+// 	if roleID, ok := claims["role_id"].(float64); ok {
+// 		c.Locals("roleID", int(roleID))
+// 	}
+// 	if userID, ok := claims["user_id"].(float64); ok {
+// 		c.Locals("userID", int(userID))
+// 	}
+
+// 	return c.Next()
+// }
+
 func checkJWTHeader(c *fiber.Ctx) error {
 	authHeader := c.Get("Authorization")
 	log.Println("Authorization XXX Header:", authHeader)
@@ -480,22 +533,44 @@ func checkJWTHeader(c *fiber.Ctx) error {
 		})
 	}
 
-	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+	tokenStr := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 	log.Println("Parsed Token String:", tokenStr)
 
+	if tokenStr == "" || tokenStr == "null" || tokenStr == "undefined" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"authenticated": false,
+			"message":       "Unauthorized: Invalid token value",
+		})
+	}
+
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		// ✅ ป้องกัน alg spoofing
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte("my-secret-key"), nil
 	})
 
-	if err != nil || !token.Valid {
-		log.Printf("❌ Invalid token. Error: %v, Token valid: %v\n", err, token.Valid)
+	if err != nil {
+		log.Printf("❌ Invalid token. Error: %v\n", err)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"authenticated": false,
 			"message":       fmt.Sprintf("Unauthorized: Invalid token. Error: %v", err),
+		})
+	}
+
+	if token == nil {
+		log.Println("❌ Token is nil")
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"authenticated": false,
+			"message":       "Unauthorized: Token is nil",
+		})
+	}
+
+	if !token.Valid {
+		log.Println("❌ Token not valid")
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"authenticated": false,
+			"message":       "Unauthorized: Token not valid",
 		})
 	}
 
@@ -508,10 +583,8 @@ func checkJWTHeader(c *fiber.Ctx) error {
 		})
 	}
 
-	// ✅ Debug claims
 	log.Printf("✅ Token Claims: %+v\n", claims)
 
-	// ✅ เก็บลง context
 	if roleID, ok := claims["role_id"].(float64); ok {
 		c.Locals("roleID", int(roleID))
 	}
