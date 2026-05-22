@@ -117,11 +117,11 @@ func verifyJWT(c *fiber.Ctx) error {
 
 	// ✅ แกะ token
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		return []byte("my-secret-key"), nil // ใช้ secret ที่ตรงกับตอน login
+		return auth.JWTSecret(), nil // ใช้ secret ที่ตรงกับตอน login
 	})
 
 	if err != nil || !token.Valid {
-		log.Printf("Invalid token. Reason: %v\nToken: %v\n", err, token)
+		log.Printf("Invalid token. Reason: %v\n", err)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"authenticated": false,
 			"message":       fmt.Sprintf("Unauthorized: Invalid token. Reason: %v", err),
@@ -524,7 +524,6 @@ func verifyJWT(c *fiber.Ctx) error {
 
 func checkJWTHeader(c *fiber.Ctx) error {
 	authHeader := c.Get("Authorization")
-	log.Println("Authorization XXX Header:", authHeader)
 
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -534,8 +533,6 @@ func checkJWTHeader(c *fiber.Ctx) error {
 	}
 
 	tokenStr := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-	log.Println("Parsed Token String:", tokenStr)
-
 	if tokenStr == "" || tokenStr == "null" || tokenStr == "undefined" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"authenticated": false,
@@ -547,7 +544,7 @@ func checkJWTHeader(c *fiber.Ctx) error {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte("my-secret-key"), nil
+		return auth.JWTSecret(), nil
 	})
 
 	if err != nil {
@@ -582,8 +579,6 @@ func checkJWTHeader(c *fiber.Ctx) error {
 			"message":       "Unauthorized: Invalid claims",
 		})
 	}
-
-	log.Printf("✅ Token Claims: %+v\n", claims)
 
 	if roleID, ok := claims["role_id"].(float64); ok {
 		c.Locals("roleID", int(roleID))
@@ -781,14 +776,14 @@ func Setup(app *fiber.App) {
 	// pointofsalesGroup.Get("/:uuid/live", pointofsale.Live)
 	pointofsalesGroup.Get("/live", pointofsale.Live)
 
-	categoriesGroup := app.Group("/categories")
+	categoriesGroup := app.Group("/categories", checkJWTHeader)
 	categoriesGroup.Get("/anyData", category.AnyData)
 	categoriesGroup.Post("/store", category.Store)
 	categoriesGroup.Get("/:id/edit", category.Edit)
 	categoriesGroup.Put("/:id/update", category.Update)
 	// categoriesGroup.Delete("/:id/delete", category.Delete)
 
-	productsGroup := app.Group("/products")
+	productsGroup := app.Group("/products", checkJWTHeader)
 	productsGroup.Get("/anyData", product.AnyData)
 	productsGroup.Get("/remain-anyData", product.RemainAnyData)
 	productsGroup.Post("/store", product.Store)
@@ -816,18 +811,18 @@ func Setup(app *fiber.App) {
 	// pointofsalesGroup.Post("/:id/:time")
 
 	settingSystem := app.Group("/setting-systems")
-	settingSystem.Put("/update", settingsystem.SaveSettingSystem)
+	settingSystem.Put("/update", checkJWTHeader, settingsystem.SaveSettingSystem)
 	settingSystem.Get("/:id/data", settingsystem.GetSettingSystem)
 	settingSystem.Get("/company/1", settingsystem.AnydataCompany)
 
-	suppliers := app.Group("/suppliers")
+	suppliers := app.Group("/suppliers", checkJWTHeader)
 	suppliers.Get("/anyData", supplier.AnyData)
 	suppliers.Post("/store", supplier.Store)
 	suppliers.Get("/:id/edit", supplier.Edit)
 	suppliers.Put("/:id/update", supplier.Update)
 	suppliers.Delete("/:id/delete", supplier.Delete)
 
-	receipts := app.Group("/receipts")
+	receipts := app.Group("/receipts", checkJWTHeader)
 	receipts.Post("/submit", receipt.SubmitReceipt)
 	receipts.Post("/finalize", receipt.FinalizeReceipt)
 	receipts.Get("/draft", receipt.DraftReceipt)

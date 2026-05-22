@@ -111,6 +111,12 @@ func SupplierUpdate(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "ProductReceipt not found"})
 	}
 
+	if productReceipt.ReceiptStatus != "draft" {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error": "Cannot update supplier because this receipt has already been saved",
+		})
+	}
+
 	productReceipt.SupplierID = supplierID
 
 	// บันทึกข้อมูลที่อัปเดตลงในฐานข้อมูล
@@ -155,8 +161,6 @@ func SubmitDraft(c *fiber.Ctx) error {
 	}
 
 	// Debug Logs เพื่อตรวจสอบค่า
-	log.Printf("Payload Received: %+v", payload)
-
 	// ดึงข้อมูลจาก Payload
 	drafts := payload.Drafts
 	if drafts.SupplierID == 0 || drafts.ProductID == 0 || drafts.PurchaseOrderNumber == "" || drafts.Status == "" {
@@ -171,6 +175,17 @@ func SubmitDraft(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid productReceiptReportID format"})
 	}
 	productReceiptReportIDUint := uint(productReceiptReportIDUint64)
+
+	var productReceipt model.ProductReceipt
+	if err := db.Db.First(&productReceipt, productReceiptReportIDUint).Error; err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "ProductReceipt not found"})
+	}
+
+	if productReceipt.ReceiptStatus != "draft" {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error": "Cannot add or update items because this receipt has already been saved",
+		})
+	}
 
 	var existingItem model.ProductReceiptItem
 
@@ -236,14 +251,21 @@ func SubmitDraft(c *fiber.Ctx) error {
 			var productReceiptItemX ProductReceiptItemResponse
 
 			err := db.Db.Table("product_receipt_items").
-				Joins("LEFT JOIN stock_entries ON stock_entries.product_receipt_item_id = product_receipt_items.id").
+				Joins(`
+					LEFT JOIN (
+						SELECT product_receipt_item_id, SUM(remaining_qty) AS remaining_quantity
+						FROM stock_entries
+						WHERE deleted_at IS NULL
+						GROUP BY product_receipt_item_id
+					) stock_totals ON product_receipt_items.id = stock_totals.product_receipt_item_id
+				`).
 				Select("product_receipt_items.id, product_receipt_items.receipt_id, product_receipt_items.product_id, "+
 					"product_receipt_items.quantity, product_receipt_items.unit_price, product_receipt_items.total_price, "+
 					"product_receipt_items.receipt_item_status, product_receipt_items.is_active, "+
-					"COALESCE(stock_entries.remaining_qty, 0) AS remaining_quantity, "+
+					"COALESCE(stock_totals.remaining_quantity, 0) AS remaining_quantity, "+
 					"product_receipt_items.created_at, product_receipt_items.updated_at, product_receipt_items.deleted_at").
 				// Where("product_receipt_items.receipt_id = ? AND product_receipt_items.product_id = ?", productReceiptReportID, drafts.ProductID).
-				Where("product_receipt_items.receipt_id = ? AND stock_entries.product_receipt_item_id = ?", productReceiptReportID, productReceiptItem.ID).
+				Where("product_receipt_items.receipt_id = ? AND product_receipt_items.id = ?", productReceiptReportID, productReceiptItem.ID).
 				First(&productReceiptItemX).Error
 
 			if err != nil {
@@ -264,9 +286,6 @@ func SubmitDraft(c *fiber.Ctx) error {
 	existingItem.Quantity += drafts.Quantity
 	existingItem.TotalPrice += drafts.TotalPrice
 	existingItem.UnitPrice = existingItem.TotalPrice / float64(existingItem.Quantity)
-	log.Printf("Existing Item: %+v", existingItem)
-	fmt.Printf("Existing Item Details:\n %+v\n", existingItem)
-
 	var existingStockEntry model.StockEntry
 
 	//กรณีที่ไม่มีข้อมูลใน StockEntry
@@ -328,13 +347,20 @@ func SubmitDraft(c *fiber.Ctx) error {
 	var productReceiptItemX ProductReceiptItemResponse
 
 	err2 := db.Db.Table("product_receipt_items").
-		Joins("LEFT JOIN stock_entries ON stock_entries.product_receipt_item_id = product_receipt_items.id").
+		Joins(`
+			LEFT JOIN (
+				SELECT product_receipt_item_id, SUM(remaining_qty) AS remaining_quantity
+				FROM stock_entries
+				WHERE deleted_at IS NULL
+				GROUP BY product_receipt_item_id
+			) stock_totals ON product_receipt_items.id = stock_totals.product_receipt_item_id
+		`).
 		Select("product_receipt_items.id, product_receipt_items.receipt_id, product_receipt_items.product_id, "+
 			"product_receipt_items.quantity, product_receipt_items.unit_price, product_receipt_items.total_price, "+
 			"product_receipt_items.receipt_item_status, product_receipt_items.is_active, "+
-			"COALESCE(stock_entries.remaining_qty, 0) AS remaining_quantity, "+
+			"COALESCE(stock_totals.remaining_quantity, 0) AS remaining_quantity, "+
 			"product_receipt_items.created_at, product_receipt_items.updated_at, product_receipt_items.deleted_at").
-		Where("product_receipt_items.receipt_id = ? AND stock_entries.product_receipt_item_id = ?", productReceiptReportID, existingItem.ID).
+		Where("product_receipt_items.receipt_id = ? AND product_receipt_items.id = ?", productReceiptReportID, existingItem.ID).
 		First(&productReceiptItemX).Error
 
 	if err2 != nil {

@@ -15,6 +15,7 @@ build/
 # Nginx logs + SSL (อย่าใส่ cert ลง repo)
 nginx/log/
 nginx/ssl/
+nginx/certs-local/
 
 # Local env
 .env
@@ -26,3 +27,7 @@ data/
 
 # Go build artifacts (ถ้าบิลด์ local)
 backend/myapp
+backend/backend-dev.exe
+backend/backend-dev.exe~
+backend/license.json
+*.db.backup-*

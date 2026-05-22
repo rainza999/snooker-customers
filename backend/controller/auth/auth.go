@@ -3,6 +3,7 @@ package auth
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/rainza999/fiber-test/db"
 	"gorm.io/gorm"
@@ -18,7 +19,13 @@ import (
 	helper "github.com/rainza999/fiber-test/controller/helper"
 )
 
-var jwtSecret = []byte("my-secret-key")
+func JWTSecret() []byte {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "my-secret-key"
+	}
+	return []byte(secret)
+}
 
 // Binding from JSON
 type LoginBody struct {
@@ -45,19 +52,23 @@ func Login(c *fiber.Ctx) error {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid username or password"})
 	}
 
-	// เช็ค password
+	// // เช็ค password
+	// if !CheckPasswordHash(json.Password, userExists.Password) {
+	// 	return c.Status(401).JSON(fiber.Map{"error": "Invalid username or password"})
+	// }
+
 	if !CheckPasswordHash(json.Password, userExists.Password) {
 		return c.Status(401).JSON(fiber.Map{"error": "Invalid username or password"})
 	}
 
 	// สร้าง JWT
 	claims := CustomClaims{
-		UserID:   userExists.ID,
-		Username: userExists.Username,
-		RoleID:   userExists.RoleID,
-		// ExpiresAt: time.Now().Add(24 * time.Hour).Unix(),
+		UserID:         userExists.ID,
+		Username:       userExists.Username,
+		RoleID:         userExists.RoleID,
+		StandardClaims: jwt.StandardClaims{ExpiresAt: time.Now().Add(30 * 24 * time.Hour).Unix()},
 	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(jwtSecret)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(JWTSecret())
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to generate token"})
 	}
@@ -218,8 +229,6 @@ func RefreshToken(c *fiber.Ctx) error {
 
 // You might need to implement a password hashing function like bcrypt
 func CheckPasswordHash(password, hash string) bool {
-	println("password: ", password)
-	println("hash: ", hash)
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	return err == nil
 }
@@ -244,7 +253,7 @@ func GenerateJWTToken(fullname string) (string, error) {
 
 	// Create the token with claims and sign it with the secret key
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(jwtSecret)
+	tokenString, err := token.SignedString(JWTSecret())
 	if err != nil {
 		return "", err
 	}
@@ -287,8 +296,7 @@ func LoginUser(c *fiber.Ctx) error {
 	claims["user_id"] = user.ID
 	claims["exp"] = time.Now().Add(time.Hour * 7200).Unix()
 
-	fmt.Println(user.ID)
-	t, err := token.SignedString([]byte("my-secret-key"))
+	t, err := token.SignedString(JWTSecret())
 	if err != nil {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
@@ -303,8 +311,7 @@ func LoginUser(c *fiber.Ctx) error {
 		Secure:   false, // ใช้ false หากไม่ได้ใช้ HTTPS
 		SameSite: "Lax",
 	})
-	log.Println("Login successful. JWT token:", t)
-	log.Println("teset Login Show Cookie:", c.Cookies("jwt"))
+	log.Println("Login successful")
 
 	return c.JSON(fiber.Map{"message": "success"})
 }
@@ -314,7 +321,7 @@ func Users(c *fiber.Ctx) error {
 	fmt.Println(cookie)
 	fmt.Println("cookie")
 	token, err := jwt.ParseWithClaims(cookie, &jwt.StandardClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
+		return JWTSecret(), nil
 	})
 
 	if err != nil {

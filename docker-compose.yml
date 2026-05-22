@@ -1,47 +1,98 @@
 networks:
-    snookersystembuild:
+  snookersystembuild:
+
+x-backend-common: &backend-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  working_dir: /app
+  networks:
+    - snookersystembuild
+
+x-backend-env: &backend-env
+  LICENSE_PATH: /app/license/license.json
 
 services:
-    site:
-        image: nginx:stable-alpine
-        container_name: nginx-snooker-build
-        ports:
-            - "80:80"
-            - "443:443"
-        volumes:
-            - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
-            - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-            - ./nginx/log:/var/log/nginx
-            - /etc/letsencrypt:/etc/letsencrypt:ro # ใช้ cert จริง
-            - ./frontend:/usr/share/nginx/html:ro
-            - ./data/uploads:/srv/uploads:ro
-            - ./nginx/certs:/etc/nginx/certs:ro
-        depends_on:
-            - golang-demo1
-            - golang-neverdie
-        networks:
-            - snookersystembuild
+  site:
+    image: nginx:stable-alpine
+    container_name: nginx-snooker-build
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CH_CHANG_HOST: ${CH_CHANG_HOST:-ch-chang.yssnooker.com}
+      NEVERDIE_HOST: ${NEVERDIE_HOST:-neverdie.yssnooker.com}
+      OM_HOST: ${OM_HOST:-om.yssnooker.com}
+      SITE4_HOST: ${SITE4_HOST:-site4.yssnooker.com}
+      BACKEND_DEFAULT: ${BACKEND_DEFAULT:-golang-demo1}
+      BACKEND_CH_CHANG: ${BACKEND_CH_CHANG:-golang-demo1}
+      BACKEND_NEVERDIE: ${BACKEND_NEVERDIE:-golang-neverdie}
+      BACKEND_OM: ${BACKEND_OM:-golang-demo1}
+      BACKEND_SITE4: ${BACKEND_SITE4:-golang-site4}
+      UPLOAD_ROOT_DEFAULT: ${UPLOAD_ROOT_DEFAULT:-/srv/uploads}
+      UPLOAD_ROOT_CH_CHANG: ${UPLOAD_ROOT_CH_CHANG:-/srv/uploads}
+      UPLOAD_ROOT_NEVERDIE: ${UPLOAD_ROOT_NEVERDIE:-/srv/uploads/neverdie}
+      UPLOAD_ROOT_OM: ${UPLOAD_ROOT_OM:-/srv/uploads}
+      UPLOAD_ROOT_SITE4: ${UPLOAD_ROOT_SITE4:-/srv/uploads/site4}
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/log:/var/log/nginx
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./frontend:/usr/share/nginx/html:ro
+      - ${UPLOADS_ROOT_PATH:-./data/uploads}:/srv/uploads:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - snookersystembuild
 
-    golang-demo1:
-        build:
-            context: .
-            dockerfile: Dockerfile
-        container_name: golang-snooker-demo1
-        working_dir: /app
-        # ports: ["8001:8000"]   # เปิดไว้ debug ก็ได้ (ไม่จำเป็น)
-        volumes:
-            - ./data/demo1/snooker.db:/app/snooker.db
-            - ./data/uploads:/app/uploads
-        networks:
-            - snookersystembuild
-    golang-neverdie:
-        build:
-            context: .
-            dockerfile: Dockerfile
-        container_name: golang-snooker-neverdie
-        working_dir: /app
-        volumes:
-            - ./data/neverdie/snooker.db:/app/snooker.db
-            - ./data/uploads/neverdie:/app/uploads
-        networks:
-            - snookersystembuild
+  golang-demo1:
+    <<: *backend-common
+    container_name: golang-snooker-demo1
+    volumes:
+      - ${DB_DEMO1_PATH:-./data/demo1/snooker.db}:/app/snooker.db
+      - ${UPLOADS_DEMO1_PATH:-./data/uploads}:/app/uploads
+      - ${LICENSE_DEMO1_PATH:-./data/demo1/license}:/app/license
+    environment:
+      <<: *backend-env
+      MACHINE_ID: ${MACHINE_ID_DEMO1:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_DEMO1:-snooker-demo1}
+
+  golang-neverdie:
+    <<: *backend-common
+    container_name: golang-snooker-neverdie
+    volumes:
+      - ${DB_NEVERDIE_PATH:-./data/neverdie/snooker.db}:/app/snooker.db
+      - ${UPLOADS_NEVERDIE_PATH:-./data/uploads/neverdie}:/app/uploads
+      - ${LICENSE_NEVERDIE_PATH:-./data/neverdie/license}:/app/license
+    environment:
+      <<: *backend-env
+      MACHINE_ID: ${MACHINE_ID_NEVERDIE:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_NEVERDIE:-snooker-neverdie}
+
+  golang-om:
+    <<: *backend-common
+    profiles:
+      - om
+    container_name: golang-snooker-om
+    volumes:
+      - ${DB_OM_PATH:-./data/om/snooker.db}:/app/snooker.db
+      - ${UPLOADS_OM_PATH:-./data/uploads/om}:/app/uploads
+      - ${LICENSE_OM_PATH:-./data/om/license}:/app/license
+    environment:
+      <<: *backend-env
+      MACHINE_ID: ${MACHINE_ID_OM:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_OM:-snooker-om}
+
+  golang-site4:
+    <<: *backend-common
+    profiles:
+      - site4
+    container_name: golang-snooker-site4
+    volumes:
+      - ${DB_SITE4_PATH:-./data/site4/snooker.db}:/app/snooker.db
+      - ${UPLOADS_SITE4_PATH:-./data/uploads/site4}:/app/uploads
+      - ${LICENSE_SITE4_PATH:-./data/site4/license}:/app/license
+    environment:
+      <<: *backend-env
+      MACHINE_ID: ${MACHINE_ID_SITE4:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_SITE4:-snooker-site4}

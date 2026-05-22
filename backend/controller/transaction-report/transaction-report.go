@@ -93,7 +93,7 @@ func SearchProductTransactions(c *fiber.Ctx) error {
 		SELECT 
 			IFNULL(SUM(p.quantity), 0) AS total_receive_qty,
 			IFNULL(SUM(p.total_price), 0) AS total_receive_value,
-			MIN(pr.received_date) AS first_stock_date
+			substr(MIN(pr.received_date), 1, 10) AS first_stock_date
 		FROM product_receipt_items p
 		LEFT JOIN product_receipts pr ON p.receipt_id = pr.id 
 		WHERE 

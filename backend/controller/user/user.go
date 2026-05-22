@@ -155,9 +155,6 @@ func Update(c *fiber.Ctx) error {
 		},
 	}
 
-	log.Println("hello password")
-	log.Println(json.Password)
-
 	for _, item := range employeesAndUsers {
 		// Check if the employee with the given UUID exists
 		existingEmployee := model.Employee{}
@@ -180,11 +177,27 @@ func Update(c *fiber.Ctx) error {
 			}
 			item.User.Password = hashedPassword
 		}
-		log.Println(item.User.Password)
-		log.Println(item.User)
 		// db.Db.Model(&model.User{}).Where("employee_id = ?", existingEmployee.ID).Select("is_active").Updates(item.User)
-		db.Db.Model(&model.User{}).Where("employee_id = ?", existingEmployee.ID).Select("username", "division_id", "role_id", "is_active").Updates(item.User)
+		// db.Db.Model(&model.User{}).Where("employee_id = ?", existingEmployee.ID).Select("username", "division_id", "role_id", "is_active").Updates(item.User)
 
+		fields := []string{"username", "division_id", "role_id", "is_active"}
+
+		if json.Password != "" {
+			hashedPassword, err := AuthController.HashPassword(json.Password)
+			if err != nil {
+				log.Println(err)
+				return c.Status(500).JSON(fiber.Map{
+					"error": "Internal server error",
+				})
+			}
+			item.User.Password = hashedPassword
+			fields = append(fields, "password")
+		}
+
+		db.Db.Model(&model.User{}).
+			Where("employee_id = ?", existingEmployee.ID).
+			Select(fields).
+			Updates(item.User)
 		// db.Db.Where("employees.uuid = ?", c.Params("uuid")).Save(&item.Employee)
 		// item.User.EmployeeID = item.Employee.ID
 		// db.Db.Save(&item.User)

@@ -15,7 +15,6 @@ func DeleteReceipt(c *fiber.Ctx) error {
 	// Struct สำหรับ JSON Payload
 	id := c.Params("id")
 	// Debug Logs เพื่อตรวจสอบค่า
-	log.Printf("Payload Received: %+v", id)
 	// แปลง JSON Payload เป็น Struct
 	var product_receipt_item model.ProductReceiptItem
 	if err := db.Db.First(&product_receipt_item, id).Error; err != nil {
@@ -45,7 +44,7 @@ func EditReceipt(c *fiber.Ctx) error {
 		RemainingQuantity    int     `json:"remaining_quantity"`
 	}
 	id := c.Params("id")
-	if err := db.Db.Debug().Table("product_receipts").
+	if err := db.Db.Table("product_receipts").
 		Select(`
 			product_receipts.id, 
 			product_receipts.supplier_id AS supplier, 
@@ -53,13 +52,21 @@ func EditReceipt(c *fiber.Ctx) error {
 			product_receipt_items.quantity, 
 			product_receipt_items.total_price, 
 			product_receipt_items.id AS product_receipt_item_id,
-			stock_entries.remaining_qty AS remaining_quantity,
+			COALESCE(stock_totals.remaining_quantity, 0) AS remaining_quantity,
 			product_receipts.receipt_number AS purchase_order_number, 
 			product_receipts.receipt_status AS status
 		`).
 		Joins("JOIN product_receipt_items ON product_receipts.id = product_receipt_items.receipt_id").
-		Joins("JOIN stock_entries ON product_receipt_items.id = stock_entries.product_receipt_item_id").
+		Joins(`
+			LEFT JOIN (
+				SELECT product_receipt_item_id, SUM(remaining_qty) AS remaining_quantity
+				FROM stock_entries
+				WHERE deleted_at IS NULL
+				GROUP BY product_receipt_item_id
+			) stock_totals ON product_receipt_items.id = stock_totals.product_receipt_item_id
+		`).
 		Where("product_receipts.id = ?", id).
+		Where("product_receipt_items.deleted_at IS NULL").
 		// Where("product_receipts.receipt_status = ?", "draft").
 		Find(&drafts).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to fetch draft receipts"})
@@ -82,7 +89,7 @@ func DraftReceipt(c *fiber.Ctx) error {
 		Status               string  `json:"status"`
 	}
 
-	if err := db.Db.Debug().Table("product_receipts").
+	if err := db.Db.Table("product_receipts").
 		Select(`
 			product_receipts.id as receipt_id, 
 			product_receipt_items.id as product_receipt_item_id, 
@@ -125,8 +132,6 @@ func SubmitReceipt(c *fiber.Ctx) error {
 	}
 
 	// Debug Logs เพื่อตรวจสอบค่า
-	log.Printf("Payload Received: %+v", payload)
-
 	// ดึงข้อมูลจาก Payload
 	drafts := payload.Drafts
 	if drafts.SupplierID == 0 || drafts.ProductID == 0 || drafts.Quantity <= 0 || drafts.TotalPrice <= 0 || drafts.PurchaseOrderNumber == "" || drafts.Status == "" {
@@ -142,9 +147,26 @@ func SubmitReceipt(c *fiber.Ctx) error {
 	// คำนวณราคาต่อหน่วย
 	unitPrice := drafts.TotalPrice / float64(drafts.Quantity)
 
-	// ตรวจสอบว่ามี ProductReceipt ที่ใช้ PurchaseOrderNumber นี้อยู่หรือไม่
+	// ตรวจสอบเลขบิลซ้ำทั้งระบบก่อนสร้างหรือเพิ่มรายการ
+	var conflictingReceipt model.ProductReceipt
+	if err := db.Db.Where("receipt_number = ?", drafts.PurchaseOrderNumber).
+		Where("supplier_id <> ?", drafts.SupplierID).
+		Where("deleted_at IS NULL").
+		First(&conflictingReceipt).Error; err == nil {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":   "receipt_number_already_exists",
+			"message": "เลขบิลนี้มีอยู่ในระบบแล้ว ไม่สามารถรับเข้าซ้ำกับผู้จำหน่ายรายอื่นได้",
+		})
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("Error checking conflicting ProductReceipt: %v", err)
+		return c.Status(500).JSON(fiber.Map{"error": "Error checking receipt"})
+	}
+
 	var existingReceipt model.ProductReceipt
-	if err := db.Db.Where("receipt_number = ?", drafts.PurchaseOrderNumber).Where("supplier_id = ?", drafts.SupplierID).First(&existingReceipt).Error; err != nil {
+	if err := db.Db.Where("receipt_number = ?", drafts.PurchaseOrderNumber).
+		Where("supplier_id = ?", drafts.SupplierID).
+		Where("deleted_at IS NULL").
+		First(&existingReceipt).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// หากไม่มีใบเสร็จในฐานข้อมูล ให้สร้างใหม่
 			productReceipt := model.ProductReceipt{
@@ -167,6 +189,12 @@ func SubmitReceipt(c *fiber.Ctx) error {
 			log.Printf("Error checking existing ProductReceipt: %v", err)
 			return c.Status(500).JSON(fiber.Map{"error": "Error checking receipt"})
 		}
+	}
+
+	if existingReceipt.ReceiptStatus != "draft" {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error": "Cannot add or update items because this receipt has already been saved",
+		})
 	}
 
 	var existingItem model.ProductReceiptItem
@@ -221,10 +249,6 @@ func SubmitReceipt(c *fiber.Ctx) error {
 
 func FinalizeReceipt(c *fiber.Ctx) error {
 
-	println("FinalizeReceipt called")
-	body := c.Body()
-	log.Printf("Raw Body: %s", string(body))
-
 	// แปลงข้อมูล JSON เป็น struct
 	var payload struct {
 		Receipts []struct {
@@ -256,6 +280,12 @@ func FinalizeReceipt(c *fiber.Ctx) error {
 		log.Printf("Error fetching receipt: %v", err)
 		return c.Status(404).JSON(fiber.Map{
 			"error": "Receipt not found",
+		})
+	}
+
+	if receiptX.ReceiptStatus != "draft" {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error": "Cannot finalize because this receipt has already been saved",
 		})
 	}
 

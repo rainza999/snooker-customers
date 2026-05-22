@@ -1,8 +1,6 @@
 package middleware
 
 import (
-	"log"
-
 	"github.com/gofiber/fiber/v2"
 	"github.com/rainza999/fiber-test/db"
 	model "github.com/rainza999/fiber-test/models"
@@ -12,11 +10,7 @@ import (
 func PermissionMiddleware(permissionName string) func(c *fiber.Ctx) error {
 	return func(c *fiber.Ctx) error {
 		// ดึงข้อมูล roleID จาก context ที่ได้จาก middleware ก่อนหน้า
-		log.Println("permission_middleware")
-		log.Println("Test")
 		roleID, ok := c.Locals("roleID").(int)
-		log.Println(roleID)
-		log.Println("test")
 		if !ok {
 			return c.Status(fiber.StatusUnauthorized).SendString("Unauthorized: Invalid role ID")
 		}

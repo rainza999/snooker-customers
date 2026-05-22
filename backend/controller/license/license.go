@@ -61,11 +61,9 @@ func ActivateLicense(c *fiber.Ctx) error {
 
 	// ❗ สำคัญ: ใช้ path ที่ Docker container เขียนได้
 	// licensePath := "/app/license.json" <= docker online
-	ex, _ := os.Executable()
-	dir := filepath.Dir(ex)
-	licensePath := filepath.Join(dir, "license.json")
+	licensePath := getLicensePath()
 
-	if err := os.WriteFile(licensePath, data, 0644); err != nil {
+	if err := writeLicenseFile(licensePath, data); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Failed to write license file"})
 	}
 
@@ -122,20 +120,15 @@ func GenerateActivationKeys(n int) error {
 func CheckLicenseStatus(c *fiber.Ctx) error {
 	licensePath := getLicensePath()
 
-	// ✅ ถ้าไม่มี license.json → สร้างใหม่
 	if !fileExists(licensePath) {
-		fmt.Println("⚠️ ไม่พบ license.json สร้างไฟล์ใหม่")
 		machineID := generateMachineID()
 
-		// 🔁 เช็คกับ license server ก่อน
 		isActivated, activatedAt, err := checkLicenseWithServer(machineID)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"valid": false, "error": "license server error"})
 		}
 
-		// ✅ สร้าง license.json
-		err = createInitialLicenseFileWithStatus(licensePath, machineID, isActivated, activatedAt)
-		if err != nil {
+		if err := createInitialLicenseFileWithStatus(licensePath, machineID, isActivated, activatedAt); err != nil {
 			return c.Status(500).JSON(fiber.Map{"valid": false, "error": "failed to create license"})
 		}
 
@@ -146,7 +139,6 @@ func CheckLicenseStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	// ✅ อ่าน license.json
 	data, err := os.ReadFile(licensePath)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"valid": false, "error": "read error"})
@@ -163,31 +155,25 @@ func CheckLicenseStatus(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"valid": false, "error": "invalid license format"})
 	}
 
-	fmt.Println("✅ machine_id in license.json:", result.License.MachineID)
-	fmt.Println(licensePath)
-	fmt.Println("✅ machine_id generated now:", generateMachineID())
-
-	// ✅ ตรวจ machine_id
 	if result.License.MachineID != generateMachineID() {
 		return c.Status(400).JSON(fiber.Map{"valid": false, "error": "machine mismatch"})
 	}
 
-	// 🔁 เช็คกับ license server
+	if trustLocalLicense() && result.License.IsValid {
+		return c.JSON(fiber.Map{"valid": true})
+	}
+
 	isActivated, activatedAt, err := checkLicenseWithServer(result.License.MachineID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"valid": false, "error": "license server error"})
 	}
 
-	// ✅ ถ้า server บอกว่า license นี้ valid แล้ว → update local license.json
 	if isActivated && (!result.License.IsValid || result.License.ActivatedAt == "") {
-		fmt.Println("🔄 อัปเดต license.json เพราะ server ยืนยันว่า valid")
-		err = createInitialLicenseFileWithStatus(licensePath, result.License.MachineID, true, activatedAt)
-		if err != nil {
+		if err := createInitialLicenseFileWithStatus(licensePath, result.License.MachineID, true, activatedAt); err != nil {
 			return c.Status(500).JSON(fiber.Map{"valid": false, "error": "update local license failed"})
 		}
 	}
 
-	// ✅ ตรวจ is_valid
 	if !result.License.IsValid {
 		return c.Status(200).JSON(fiber.Map{
 			"valid":      false,
@@ -205,17 +191,11 @@ func checkLicenseWithServer(machineID string) (bool, string, error) {
 	reqBody := map[string]string{"machine_id": machineID}
 	jsonBody, _ := json.Marshal(reqBody)
 
-	fmt.Println("📡 กำลังเช็ค license กับ server:", url)
-	fmt.Println("📦 ข้อมูลที่ส่ง:", string(jsonBody))
-
 	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
-		fmt.Println("❌ เชื่อมต่อ server ไม่สำเร็จ:", err)
 		return false, "", err
 	}
 	defer resp.Body.Close()
-
-	fmt.Println("✅ ได้รับ response จาก server:", resp.Status)
 
 	var result struct {
 		IsUsed      bool   `json:"is_used"`
@@ -223,12 +203,15 @@ func checkLicenseWithServer(machineID string) (bool, string, error) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fmt.Println("❌ แปลง response ไม่ได้:", err)
 		return false, "", err
 	}
 
-	fmt.Println("🎯 ผลลัพธ์จาก server:", result)
 	return result.IsUsed, result.ActivatedAt, nil
+}
+
+func trustLocalLicense() bool {
+	value := os.Getenv("LICENSE_TRUST_LOCAL")
+	return value == "1" || value == "true" || value == "TRUE" || value == "yes" || value == "YES"
 }
 
 func createInitialLicenseFileWithStatus(path, machineID string, isValid bool, activatedAt string) error {
@@ -243,7 +226,7 @@ func createInitialLicenseFileWithStatus(path, machineID string, isValid bool, ac
 		},
 	}
 	file, _ := json.MarshalIndent(data, "", "  ")
-	return os.WriteFile(path, file, 0644)
+	return writeLicenseFile(path, file)
 }
 
 // 🔧 helper: ตรวจไฟล์มีอยู่หรือไม่
@@ -269,10 +252,21 @@ func fileExists(path string) bool {
 // }
 
 func generateMachineID() string {
+	if machineID := os.Getenv("MACHINE_ID"); machineID != "" {
+		return machineID
+	}
+	if seed := os.Getenv("MACHINE_ID_SEED"); seed != "" {
+		return hashMachineID(seed)
+	}
+
 	hostname, _ := os.Hostname()
 	mac := getPrimaryMAC()
 	raw := hostname + "_" + mac
 
+	return hashMachineID(raw)
+}
+
+func hashMachineID(raw string) string {
 	hash := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(hash[:])
 }
@@ -292,14 +286,15 @@ func GetMachineID(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"machine_id": id})
 }
 func getLicensePath() string {
+	if path := os.Getenv("LICENSE_PATH"); path != "" {
+		return path
+	}
 	ex, _ := os.Executable()
 	dir := filepath.Dir(ex)
 	return filepath.Join(dir, "license.json")
 }
 func EnsureLicenseFile() error {
-	ex, _ := os.Executable()
-	dir := filepath.Dir(ex)
-	licensePath := filepath.Join(dir, "license.json")
+	licensePath := getLicensePath()
 
 	if _, err := os.Stat(licensePath); os.IsNotExist(err) {
 		machineID := generateMachineID()
@@ -312,11 +307,18 @@ func EnsureLicenseFile() error {
 			},
 		}
 		data, _ := json.MarshalIndent(initial, "", "  ")
-		if err := os.WriteFile(licensePath, data, 0644); err != nil {
+		if err := writeLicenseFile(licensePath, data); err != nil {
 			return fmt.Errorf("failed to write license.json: %v", err)
 		}
 
 		fmt.Println("✅ สร้าง license.json เริ่มต้นแล้ว")
 	}
 	return nil
+}
+
+func writeLicenseFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }

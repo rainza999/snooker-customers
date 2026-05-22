@@ -42,10 +42,6 @@ func SaveSettingSystem(c *fiber.Ctx) error {
 	closeTablePassword := c.FormValue("closeTablePassword")
 	editReportPassword := c.FormValue("editReportPassword")
 
-	// แสดงค่าที่ได้รับใน console
-	fmt.Println("closeTablePassword:", closeTablePassword)
-	fmt.Println("editReportPassword:", editReportPassword)
-
 	// ตั้งค่าและเข้ารหัสรหัสผ่านปิดโต๊ะ
 	if err := setting.SetCloseTablePassword(closeTablePassword); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash close table password"})

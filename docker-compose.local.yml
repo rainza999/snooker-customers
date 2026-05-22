@@ -1,0 +1,28 @@
+# Local-only Docker Desktop override.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build site golang-demo1
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml --profile om --profile site4 up -d --build
+
+services:
+  golang-demo1:
+    environment:
+      LICENSE_TRUST_LOCAL: "true"
+
+  golang-neverdie:
+    environment:
+      LICENSE_TRUST_LOCAL: "true"
+
+  golang-om:
+    environment:
+      LICENSE_TRUST_LOCAL: "true"
+
+  golang-site4:
+    environment:
+      LICENSE_TRUST_LOCAL: "true"
+
+  site:
+    ports: !override
+      - "8080:80"
+    volumes:
+      - ./nginx/default.local.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/certs-local:/etc/nginx/certs:ro
