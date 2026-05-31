@@ -4,15 +4,14 @@ This compose file runs the dev customer playground without touching the demo
 compose stack:
 
 ```text
-dev.yssnooker.com        -> golang-rain -> data/rain/snooker.db
+dev.yssnooker.com        -> golang-dev -> data/dev/snooker.db
 rain.yssnooker.com       -> golang-rain -> data/rain/snooker.db
 smart-home.yssnooker.com -> golang-smart-home -> data/smart-home/snooker.db
 arayasujin.yssnooker.com -> golang-arayasujin -> data/arayasujin/snooker.db
 ```
 
-`dev.yssnooker.com` is an alias to the Rain site for now. Each real site has
-its own SQLite database, uploads folder, license folder, config folder, stable
-machine ID seed, and JWT secret. The frontend build is shared.
+Each site has its own SQLite database, uploads folder, license folder, config
+folder, stable machine ID seed, and JWT secret. The frontend build is shared.
 
 ## DNS
 
@@ -35,8 +34,8 @@ cp docker-compose.dev.env.example .env
 nano .env
 
 mkdir -p \
-  data/{rain,smart-home,arayasujin}/{license,config} \
-  data/uploads/{rain,smart-home,arayasujin} \
+  data/{dev,rain,smart-home,arayasujin}/{license,config} \
+  data/uploads/{dev,rain,smart-home,arayasujin} \
   nginx/ssl/live/yssnooker.com nginx/log
 ```
 
@@ -60,6 +59,7 @@ The certificate must cover all four hostnames above.
 Copy a separate database file for each site:
 
 ```text
+data/dev/snooker.db
 data/rain/snooker.db
 data/smart-home/snooker.db
 data/arayasujin/snooker.db
