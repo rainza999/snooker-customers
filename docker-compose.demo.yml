@@ -37,7 +37,7 @@ services:
       - ./nginx/log:/var/log/nginx
       - ./frontend:/usr/share/nginx/html:ro
       - ./data/uploads:/srv/uploads:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       - golang-demo1
       - golang-demo2

@@ -33,7 +33,7 @@ nano .env
 mkdir -p \
   data/demo{1,2,3,4}/{license,config} \
   data/uploads/demo{1,2,3,4} \
-  nginx/certs nginx/log
+  nginx/ssl/live/yssnooker.com nginx/log
 ```
 
 Generate a different JWT secret for each site and paste the values into `.env`:
@@ -45,8 +45,8 @@ openssl rand -hex 32
 Place a valid certificate and private key on the server:
 
 ```text
-nginx/certs/cloudflare-origin.crt
-nginx/certs/cloudflare-origin.key
+nginx/ssl/live/yssnooker.com/fullchain.pem
+nginx/ssl/live/yssnooker.com/privkey.pem
 ```
 
 The certificate must cover all four demo subdomains.
