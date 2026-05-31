@@ -1,12 +1,14 @@
 package product
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/rainza999/fiber-test/db"
+	"github.com/rainza999/fiber-test/inventory"
 	model "github.com/rainza999/fiber-test/models"
 	"gorm.io/gorm"
 )
@@ -41,6 +43,50 @@ func RemainAnyData(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(results)
+}
+
+func AdjustStock(c *fiber.Ctx) error {
+	productID, err := strconv.ParseUint(c.Params("id"), 10, 64)
+	if err != nil || productID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid product id"})
+	}
+	var request struct {
+		QuantityChange int     `json:"quantity_change"`
+		CostPerUnit    float64 `json:"cost_per_unit"`
+		Notes          string  `json:"notes"`
+	}
+	if err := c.BodyParser(&request); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+	if request.QuantityChange == 0 || request.Notes == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "quantity_change and notes are required"})
+	}
+	var product model.Product
+	if err := db.Db.First(&product, uint(productID)).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Product not found"})
+	}
+	if err := inventory.AdjustStock(db.Db, product.ID, request.QuantityChange, request.CostPerUnit, request.Notes); err != nil {
+		if errors.Is(err, inventory.ErrInsufficientStock) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Not enough stock for adjustment"})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"message": "Stock adjusted successfully"})
+}
+
+func StockTransactions(c *fiber.Ctx) error {
+	productID, err := strconv.ParseUint(c.Params("id"), 10, 64)
+	if err != nil || productID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid product id"})
+	}
+	var transactions []model.InventoryTransaction
+	if err := db.Db.Where("product_id = ?", uint(productID)).
+		Order("id DESC").
+		Limit(100).
+		Find(&transactions).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load stock transactions"})
+	}
+	return c.JSON(transactions)
 }
 
 func AnyData(c *fiber.Ctx) error {

@@ -140,7 +140,7 @@ func SupplierUpdate(c *fiber.Ctx) error {
 	})
 }
 
-func SubmitDraft(c *fiber.Ctx) error {
+func legacySubmitDraft(c *fiber.Ctx) error {
 	productReceiptReportID := c.Params("id")
 
 	// Struct สำหรับ JSON Payload

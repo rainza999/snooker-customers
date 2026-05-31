@@ -19,6 +19,7 @@ import (
 	settingpointofsale "github.com/rainza999/fiber-test/controller/setting-point-of-sale"
 	settingsystem "github.com/rainza999/fiber-test/controller/setting-system"
 	settingtable "github.com/rainza999/fiber-test/controller/setting-table"
+	systemconfig "github.com/rainza999/fiber-test/controller/system-config"
 	"github.com/rainza999/fiber-test/controller/user"
 
 	receiptreport "github.com/rainza999/fiber-test/controller/receipt-report"
@@ -611,6 +612,15 @@ func Setup(app *fiber.App) {
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.SendStatus(200)
 	})
+	app.Post("/activate", license.ActivateLicense)
+	app.Get("/license-status", license.CheckLicenseStatus)
+	app.Get("/machine-id", license.GetMachineID)
+	app.Get("/system-config/status", systemconfig.Status)
+	app.Post("/system-config/save", systemconfig.Save)
+	app.Post("/system-config/skip", systemconfig.Skip)
+
+	app.Use(systemconfig.RequireReady)
+
 	app.Post("/login", func(c *fiber.Ctx) error {
 		return auth.Login(c)
 	})
@@ -763,6 +773,7 @@ func Setup(app *fiber.App) {
 		})
 	})
 	pointofsalesGroup.Get("/anyData", pointofsale.AnyData)
+	pointofsalesGroup.Get("/events", pointofsale.Events)
 	pointofsalesGroup.Post("/store/visitation", pointofsale.Store)
 	// pointofsalesGroup.Post("/api/updateUseTime", pointofsale.UpdateUseTime)
 	pointofsalesGroup.Post("/api/verify-password", pointofsale.VerifyPassword)
@@ -789,6 +800,8 @@ func Setup(app *fiber.App) {
 	productsGroup.Post("/store", product.Store)
 	productsGroup.Get("/:id/edit", product.Edit)
 	productsGroup.Put("/:id/update", product.Update)
+	productsGroup.Post("/:id/stock-adjustments", middleware.PermissionMiddleware("product-receipt-reports-edit"), product.AdjustStock)
+	productsGroup.Get("/:id/stock-transactions", middleware.PermissionMiddleware("product-transactions-access"), product.StockTransactions)
 
 	saleReport := app.Group("/sale-reports", checkJWTHeader, middleware.PermissionMiddleware("sale-reports-access"))
 	saleReport.Get("/daily", saleofreport.GetDailySalesReport) // ดึงรายงานแบบวัน
@@ -832,9 +845,9 @@ func Setup(app *fiber.App) {
 	//	usersGroup := app.Group("/users", checkJWTCookie, middleware.PermissionMiddleware("users-access"))
 	productReceiptReport := app.Group("/product-receipt-reports", checkJWTHeader, middleware.PermissionMiddleware("product-receipt-reports-access"))
 	productReceiptReport.Get("/anyData", receiptreport.AnyData)
-	productReceiptReport.Get("/:id/edit", receiptreport.EditView, checkJWTHeader, middleware.PermissionMiddleware("product-receipt-reports-edit"))
-	productReceiptReport.Put("/:id/update", receiptreport.Update, checkJWTHeader, middleware.PermissionMiddleware("product-receipt-reports-edit"))
-	productReceiptReport.Delete("/:id/delete", receiptreport.Delete, checkJWTHeader, middleware.PermissionMiddleware("product-receipt-reports-delete"))
+	productReceiptReport.Get("/:id/edit", checkJWTHeader, middleware.PermissionMiddleware("product-receipt-reports-edit"), receiptreport.EditView)
+	productReceiptReport.Put("/:id/update", checkJWTHeader, middleware.PermissionMiddleware("product-receipt-reports-edit"), receiptreport.Update)
+	productReceiptReport.Delete("/:id/delete", checkJWTHeader, middleware.PermissionMiddleware("product-receipt-reports-delete"), receiptreport.Delete)
 	productReceiptReportAPI := productReceiptReport.Group("/api", checkJWTHeader, middleware.PermissionMiddleware("product-receipt-reports-edit"))
 	productReceiptReportAPI.Put("/supplier/:id/update", receiptreport.SupplierUpdate)
 	productReceiptReportAPI.Post("/draft/:id/submit", receiptreport.SubmitDraft)
@@ -866,9 +879,5 @@ func Setup(app *fiber.App) {
 	// productTransactionReportAPI := productTransactionReport.Group("/api", checkJWTCookie, middleware.PermissionMiddleware("product-transactions-access"))
 	// productTransactionReportAPI.Get("/search", transactionreport.SearchProductTransactions)
 	// productTransactionReportAPI.Get("/products", transactionreport.ListProducts)
-
-	app.Post("/activate", license.ActivateLicense)
-	app.Get("/license-status", license.CheckLicenseStatus)
-	app.Get("/machine-id", license.GetMachineID)
 
 }

@@ -52,10 +52,23 @@ services:
       - ${DB_DEMO1_PATH:-./data/demo1/snooker.db}:/app/snooker.db
       - ${UPLOADS_DEMO1_PATH:-./data/uploads}:/app/uploads
       - ${LICENSE_DEMO1_PATH:-./data/demo1/license}:/app/license
+      - ${CONFIG_DEMO1_PATH:-./data/demo1/config}:/app/config
     environment:
       <<: *backend-env
+      SITE_ENV_PATH: /app/config/site.env
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_DEMO1:-}
       MACHINE_ID: ${MACHINE_ID_DEMO1:-}
       MACHINE_ID_SEED: ${MACHINE_ID_SEED_DEMO1:-snooker-demo1}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_DEMO1:-}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_DEMO1:-}
+      MQTT_RELAY_BROKER: ${MQTT_RELAY_BROKER_DEMO1:-}
+      MQTT_RELAY_USERNAME: ${MQTT_RELAY_USERNAME_DEMO1:-}
+      MQTT_RELAY_PASSWORD: ${MQTT_RELAY_PASSWORD_DEMO1:-}
+      MQTT_RELAY_CLIENT_ID: ${MQTT_RELAY_CLIENT_ID_DEMO1:-snooker-demo1-backend-relay}
+      MQTT_RELAY_CMD_TOPIC: ${MQTT_RELAY_CMD_TOPIC_DEMO1:-}
+      MQTT_RELAY_RESP_TOPIC: ${MQTT_RELAY_RESP_TOPIC_DEMO1:-}
+      MQTT_RELAY_QOS: ${MQTT_RELAY_QOS_DEMO1:-1}
+      MQTT_RELAY_TIMEOUT_MS: ${MQTT_RELAY_TIMEOUT_MS_DEMO1:-2000}
 
   golang-neverdie:
     <<: *backend-common
@@ -64,10 +77,23 @@ services:
       - ${DB_NEVERDIE_PATH:-./data/neverdie/snooker.db}:/app/snooker.db
       - ${UPLOADS_NEVERDIE_PATH:-./data/uploads/neverdie}:/app/uploads
       - ${LICENSE_NEVERDIE_PATH:-./data/neverdie/license}:/app/license
+      - ${CONFIG_NEVERDIE_PATH:-./data/neverdie/config}:/app/config
     environment:
       <<: *backend-env
+      SITE_ENV_PATH: /app/config/site.env
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_NEVERDIE:-}
       MACHINE_ID: ${MACHINE_ID_NEVERDIE:-}
       MACHINE_ID_SEED: ${MACHINE_ID_SEED_NEVERDIE:-snooker-neverdie}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_NEVERDIE:-}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_NEVERDIE:-}
+      MQTT_RELAY_BROKER: ${MQTT_RELAY_BROKER_NEVERDIE:-}
+      MQTT_RELAY_USERNAME: ${MQTT_RELAY_USERNAME_NEVERDIE:-}
+      MQTT_RELAY_PASSWORD: ${MQTT_RELAY_PASSWORD_NEVERDIE:-}
+      MQTT_RELAY_CLIENT_ID: ${MQTT_RELAY_CLIENT_ID_NEVERDIE:-snooker-neverdie-backend-relay}
+      MQTT_RELAY_CMD_TOPIC: ${MQTT_RELAY_CMD_TOPIC_NEVERDIE:-}
+      MQTT_RELAY_RESP_TOPIC: ${MQTT_RELAY_RESP_TOPIC_NEVERDIE:-}
+      MQTT_RELAY_QOS: ${MQTT_RELAY_QOS_NEVERDIE:-1}
+      MQTT_RELAY_TIMEOUT_MS: ${MQTT_RELAY_TIMEOUT_MS_NEVERDIE:-2000}
 
   golang-om:
     <<: *backend-common
@@ -78,10 +104,23 @@ services:
       - ${DB_OM_PATH:-./data/om/snooker.db}:/app/snooker.db
       - ${UPLOADS_OM_PATH:-./data/uploads/om}:/app/uploads
       - ${LICENSE_OM_PATH:-./data/om/license}:/app/license
+      - ${CONFIG_OM_PATH:-./data/om/config}:/app/config
     environment:
       <<: *backend-env
+      SITE_ENV_PATH: /app/config/site.env
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_OM:-}
       MACHINE_ID: ${MACHINE_ID_OM:-}
       MACHINE_ID_SEED: ${MACHINE_ID_SEED_OM:-snooker-om}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_OM:-}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_OM:-}
+      MQTT_RELAY_BROKER: ${MQTT_RELAY_BROKER_OM:-}
+      MQTT_RELAY_USERNAME: ${MQTT_RELAY_USERNAME_OM:-}
+      MQTT_RELAY_PASSWORD: ${MQTT_RELAY_PASSWORD_OM:-}
+      MQTT_RELAY_CLIENT_ID: ${MQTT_RELAY_CLIENT_ID_OM:-snooker-om-backend-relay}
+      MQTT_RELAY_CMD_TOPIC: ${MQTT_RELAY_CMD_TOPIC_OM:-}
+      MQTT_RELAY_RESP_TOPIC: ${MQTT_RELAY_RESP_TOPIC_OM:-}
+      MQTT_RELAY_QOS: ${MQTT_RELAY_QOS_OM:-1}
+      MQTT_RELAY_TIMEOUT_MS: ${MQTT_RELAY_TIMEOUT_MS_OM:-2000}
 
   golang-site4:
     <<: *backend-common
@@ -92,7 +131,20 @@ services:
       - ${DB_SITE4_PATH:-./data/site4/snooker.db}:/app/snooker.db
       - ${UPLOADS_SITE4_PATH:-./data/uploads/site4}:/app/uploads
       - ${LICENSE_SITE4_PATH:-./data/site4/license}:/app/license
+      - ${CONFIG_SITE4_PATH:-./data/site4/config}:/app/config
     environment:
       <<: *backend-env
+      SITE_ENV_PATH: /app/config/site.env
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_SITE4:-}
       MACHINE_ID: ${MACHINE_ID_SITE4:-}
       MACHINE_ID_SEED: ${MACHINE_ID_SEED_SITE4:-snooker-site4}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_SITE4:-}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_SITE4:-}
+      MQTT_RELAY_BROKER: ${MQTT_RELAY_BROKER_SITE4:-}
+      MQTT_RELAY_USERNAME: ${MQTT_RELAY_USERNAME_SITE4:-}
+      MQTT_RELAY_PASSWORD: ${MQTT_RELAY_PASSWORD_SITE4:-}
+      MQTT_RELAY_CLIENT_ID: ${MQTT_RELAY_CLIENT_ID_SITE4:-snooker-site4-backend-relay}
+      MQTT_RELAY_CMD_TOPIC: ${MQTT_RELAY_CMD_TOPIC_SITE4:-}
+      MQTT_RELAY_RESP_TOPIC: ${MQTT_RELAY_RESP_TOPIC_SITE4:-}
+      MQTT_RELAY_QOS: ${MQTT_RELAY_QOS_SITE4:-1}
+      MQTT_RELAY_TIMEOUT_MS: ${MQTT_RELAY_TIMEOUT_MS_SITE4:-2000}

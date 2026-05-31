@@ -11,6 +11,7 @@ import (
 
 	AuthController "github.com/rainza999/fiber-test/controller/auth"
 	"github.com/rainza999/fiber-test/db"
+	"github.com/rainza999/fiber-test/inventory"
 	model "github.com/rainza999/fiber-test/models"
 
 	// LicenseController "github.com/rainza999/fiber-test/controller/license"
@@ -41,6 +42,9 @@ func main() {
 	log.Printf("Current time in GMT+7: %v", now)
 
 	db.InitDB()
+	if err := inventory.Migrate(db.Db); err != nil {
+		log.Fatalf("Failed to migrate inventory integrity schema: %v", err)
+	}
 
 	// db.Db.AutoMigrate(&model.ActivationKey{})
 	// LicenseController.GenerateActivationKeys(1000)

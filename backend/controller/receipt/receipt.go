@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func DeleteReceipt(c *fiber.Ctx) error {
+func legacyDeleteReceipt(c *fiber.Ctx) error {
 	// Struct สำหรับ JSON Payload
 	id := c.Params("id")
 	// Debug Logs เพื่อตรวจสอบค่า
@@ -113,7 +113,7 @@ func DraftReceipt(c *fiber.Ctx) error {
 	})
 }
 
-func SubmitReceipt(c *fiber.Ctx) error {
+func legacySubmitReceipt(c *fiber.Ctx) error {
 	// Struct สำหรับ JSON Payload
 	var payload struct {
 		Drafts struct {
@@ -247,7 +247,7 @@ func SubmitReceipt(c *fiber.Ctx) error {
 	})
 }
 
-func FinalizeReceipt(c *fiber.Ctx) error {
+func legacyFinalizeReceipt(c *fiber.Ctx) error {
 
 	// แปลงข้อมูล JSON เป็น struct
 	var payload struct {

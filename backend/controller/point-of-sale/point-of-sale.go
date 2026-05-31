@@ -1,21 +1,114 @@
 package pointofsale
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors" // สำหรับการใช้งาน errors.Is
 	"fmt"
 	"log"
 	"math"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/rainza999/fiber-test/db"
 	model "github.com/rainza999/fiber-test/models"
+	"github.com/rainza999/fiber-test/realtime"
+	"github.com/rainza999/fiber-test/relay"
+	"github.com/valyala/fasthttp"
 	"golang.org/x/crypto/bcrypt"
 
 	"gorm.io/gorm" // สำหรับการใช้ gorm.ErrRecordNotFound
 )
+
+var (
+	errTableAlreadyActive = errors.New("table is already active")
+	errTableNotFound      = errors.New("table not found")
+	errTablePriceMismatch = errors.New("table price does not match")
+	posMutationMu         sync.Mutex
+)
+
+func currentUserDivisionID(c *fiber.Ctx) (uint, error) {
+	userID, ok := c.Locals("userID").(int)
+	if !ok {
+		return 0, errors.New("missing user context")
+	}
+
+	var user model.User
+	if err := db.Db.First(&user, userID).Error; err != nil {
+		return 0, err
+	}
+
+	return user.DivisionID, nil
+}
+
+func broadcastPOSUpdate(divisionID uint, action string) {
+	realtime.PublishPOS(divisionID, action)
+}
+
+func writePOSEvent(writer *bufio.Writer, event realtime.POSEvent) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+
+	if _, err := fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event.Type, payload); err != nil {
+		return err
+	}
+
+	return writer.Flush()
+}
+
+func Events(c *fiber.Ctx) error {
+	divisionID, err := currentUserDivisionID(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"authenticated": false,
+			"message":       "Unauthorized: Missing user context",
+		})
+	}
+
+	events, unsubscribe := realtime.SubscribePOS(divisionID)
+
+	c.Set(fiber.HeaderContentType, "text/event-stream")
+	c.Set(fiber.HeaderCacheControl, "no-cache, no-store, must-revalidate")
+	c.Set(fiber.HeaderConnection, "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(writer *bufio.Writer) {
+		defer unsubscribe()
+
+		if err := writePOSEvent(writer, realtime.NewPOSEvent("sync")); err != nil {
+			return
+		}
+
+		heartbeat := time.NewTicker(20 * time.Second)
+		defer heartbeat.Stop()
+
+		for {
+			select {
+			case event, ok := <-events:
+				if !ok {
+					return
+				}
+				if err := writePOSEvent(writer, event); err != nil {
+					return
+				}
+			case <-heartbeat.C:
+				if _, err := writer.WriteString(": keep-alive\n\n"); err != nil {
+					return
+				}
+				if err := writer.Flush(); err != nil {
+					return
+				}
+			}
+		}
+	}))
+
+	return nil
+}
 
 func AnyData(c *fiber.Ctx) error {
 
@@ -128,6 +221,71 @@ type StoreBody struct {
 	Status  string `json:"status"`
 }
 
+func publishTableRelayByID(tableID uint, on bool, action string) fiber.Map {
+	var table model.SettingTable
+	if err := db.Db.First(&table, tableID).Error; err != nil {
+		log.Printf("relay %s skipped: table_id=%d not found: %v", action, tableID, err)
+		return fiber.Map{
+			"ok":      false,
+			"skipped": true,
+			"action":  action,
+			"error":   "table not found",
+		}
+	}
+
+	return publishTableRelay(table, on, action)
+}
+
+func publishTableRelay(table model.SettingTable, on bool, action string) fiber.Map {
+	state := "off"
+	if on {
+		state = "on"
+	}
+
+	result := fiber.Map{
+		"enabled": relay.Enabled(),
+		"relay":   table.Relay,
+		"state":   state,
+		"action":  action,
+	}
+
+	if table.Relay == 0 {
+		result["ok"] = true
+		result["skipped"] = true
+		result["reason"] = "no relay mapped"
+		return result
+	}
+
+	if !relay.Enabled() {
+		result["ok"] = true
+		result["skipped"] = true
+		result["reason"] = "mqtt relay not configured"
+		return result
+	}
+
+	if err := relay.SetRelay(table.Relay, on); err != nil {
+		log.Printf("relay %s failed: table_id=%d relay=%d state=%s error=%v", action, table.ID, table.Relay, state, err)
+		result["ok"] = false
+		result["error"] = "relay command failed"
+		return result
+	}
+
+	result["ok"] = true
+	return result
+}
+
+func publishPaidVisitationRelay(visitation model.Visitation, isPaid uint8) fiber.Map {
+	if isPaid != 1 {
+		return fiber.Map{
+			"ok":      true,
+			"skipped": true,
+			"reason":  "visitation is not paid",
+		}
+	}
+
+	return publishTableRelayByID(visitation.TableID, false, "payment")
+}
+
 func Store(c *fiber.Ctx) error {
 	var json StoreBody
 	body := c.Body()
@@ -141,56 +299,84 @@ func Store(c *fiber.Ctx) error {
 	}
 
 	if json.Status == "open" {
+		divisionID, err := currentUserDivisionID(c)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized: Missing user context"})
+		}
+
+		posMutationMu.Lock()
+		defer posMutationMu.Unlock()
+
 		now := time.Now()
-		// สร้าง Visitation ใหม่
-		visitation := model.Visitation{
-			TableID:    json.TableID,
-			DivisionID: 1,
-			VisitDate:  now.Truncate(24 * time.Hour),
-			StartTime:  now,
-			ResumeTime: now,
-			UseTime:    0,
-			IsRunning:  1,
-			PauseTime:  now,
-			TotalCost:  0,
-			NetPrice:   0,
-			IsPaid:     0,
-			IsVisit:    0,
-			IsActive:   1,
-		}
-
-		result := db.Db.Create(&visitation)
-		if result.Error != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
-		}
-
-		// ค้นหา Product ที่เป็นค่าโต๊ะสนุ๊ก
-		var product model.Product
-		if err := db.Db.Where("is_snooker_time = ?", true).First(&product).Error; err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to find snooker product"})
-		}
-
-		// ค้นหาราคาจาก SettingTable
+		var visitation model.Visitation
 		var settingTable model.SettingTable
-		if err := db.Db.Where("id = ?", json.TableID).First(&settingTable).Error; err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to find setting table"})
+		err = db.Db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("id = ? AND division_id = ? AND is_active = 1", json.TableID, divisionID).
+				First(&settingTable).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return errTableNotFound
+				}
+				return err
+			}
+
+			var activeCount int64
+			if err := tx.Model(&model.Visitation{}).
+				Where("table_id = ? AND is_active = 1 AND (is_paid = 0 OR is_paid = 2) AND deleted_at IS NULL", json.TableID).
+				Count(&activeCount).Error; err != nil {
+				return err
+			}
+			if activeCount > 0 {
+				return errTableAlreadyActive
+			}
+
+			visitation = model.Visitation{
+				TableID:    json.TableID,
+				DivisionID: divisionID,
+				VisitDate:  now.Truncate(24 * time.Hour),
+				StartTime:  now,
+				ResumeTime: now,
+				UseTime:    0,
+				IsRunning:  1,
+				PauseTime:  now,
+				TotalCost:  0,
+				NetPrice:   0,
+				IsPaid:     0,
+				IsVisit:    0,
+				IsActive:   1,
+			}
+			if err := tx.Create(&visitation).Error; err != nil {
+				return err
+			}
+
+			var product model.Product
+			if err := tx.Where("is_snooker_time = ?", true).First(&product).Error; err != nil {
+				return err
+			}
+
+			service := model.Service{
+				VisitationID:   visitation.ID,
+				ProductID:      product.ID,
+				SellQuantity:   1,
+				TotalFIFO_Cost: settingTable.Price,
+				TotalCost:      settingTable.Price,
+				NetPrice:       settingTable.Price,
+				UseTime:        0,
+				Status:         "draft",
+			}
+
+			return tx.Create(&service).Error
+		})
+		if errors.Is(err, errTableAlreadyActive) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Table is already active"})
+		}
+		if errors.Is(err, errTableNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Table not found"})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to open table"})
 		}
 
-		// สร้าง Service ใหม่สำหรับค่าโต๊ะสนุ๊ก
-		service := model.Service{
-			VisitationID:   visitation.ID,
-			ProductID:      product.ID,
-			SellQuantity:   1, // ค่าเริ่มต้นคือ 1 ชั่วโมง อาจเปลี่ยนแปลงได้เมื่อมีการคำนวณเวลาจริง
-			TotalFIFO_Cost: settingTable.Price,
-			TotalCost:      settingTable.Price, // คำนวณราคาจากราคาปกติ
-			NetPrice:       settingTable.Price, // ยังไม่มีการหักส่วนลด
-			UseTime:        0,                  // เก็บ UseTime จาก Visitation
-			Status:         "draft",
-		}
-
-		if err := db.Db.Create(&service).Error; err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create service"})
-		}
+		relayResult := publishTableRelay(settingTable, true, "open")
 
 		var table []struct {
 			model.SettingTable
@@ -231,6 +417,7 @@ func Store(c *fiber.Ctx) error {
 		if result2.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result2.Error.Error()})
 		}
+		broadcastPOSUpdate(divisionID, "table-opened")
 
 		return c.JSON(fiber.Map{
 			"message":    "Data processed successfully",
@@ -238,11 +425,20 @@ func Store(c *fiber.Ctx) error {
 			"code":       visitation.Code,
 			"start_time": visitation.StartTime,
 			"table":      table,
+			"relay":      relayResult,
 		})
 	} else if json.Status == "close" {
+		divisionID, err := currentUserDivisionID(c)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized: Missing user context"})
+		}
+
+		posMutationMu.Lock()
+		defer posMutationMu.Unlock()
+
 		// ปิดโต๊ะที่มีอยู่โดยตั้งค่า is_active = 0
 		result := db.Db.Model(&model.Visitation{}).
-			Where("table_id = ? AND is_active = 1", json.TableID).
+			Where("table_id = ? AND division_id = ? AND is_active = 1", json.TableID, divisionID).
 			Updates(map[string]interface{}{
 				"is_active":  0,
 				"is_running": 0,
@@ -252,9 +448,15 @@ func Store(c *fiber.Ctx) error {
 		if result.Error != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
 		}
+		if result.RowsAffected == 0 {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Table is not active"})
+		}
+		relayResult := publishTableRelayByID(json.TableID, false, "close")
+		broadcastPOSUpdate(divisionID, "table-closed")
 
 		return c.JSON(fiber.Map{
 			"message": "Table closed successfully",
+			"relay":   relayResult,
 		})
 	}
 
@@ -305,7 +507,7 @@ type PaymentData struct {
 	Services   []ServiceData `json:"services"` // เพิ่มฟิลด์ services
 }
 
-func PaymentStore(c *fiber.Ctx) error {
+func legacyPaymentStore(c *fiber.Ctx) error {
 	// อ่านข้อมูลจาก request body
 	var paymentData PaymentData
 	// if err := c.BodyParser(&paymentData); err != nil {
@@ -580,8 +782,11 @@ func PaymentStore(c *fiber.Ctx) error {
 		}
 	}
 
+	broadcastPOSUpdate(visitation.DivisionID, "payment-updated")
+
 	// ส่ง response กลับไปยัง frontend
 	return c.JSON(fiber.Map{
+		"relay":     publishPaidVisitationRelay(visitation, paymentData.IsPaid),
 		"message":   "PaymentStore updated successfully",
 		"bill_code": visitation.BillCode, // ส่งเลขที่ BillCode กลับไปด้วย
 	})
@@ -777,12 +982,25 @@ func UpdatePausedDurationTime(c *fiber.Ctx) error {
 		})
 	}
 
+	relayResult := fiber.Map{
+		"ok":      true,
+		"skipped": true,
+		"reason":  "unsupported pause action",
+	}
+	if request.Action == "pause" {
+		relayResult = publishTableRelayByID(visitation.TableID, false, "pause")
+	} else if request.Action == "resume" {
+		relayResult = publishTableRelayByID(visitation.TableID, true, "resume")
+	}
+	broadcastPOSUpdate(visitation.DivisionID, "table-"+request.Action)
+
 	return c.JSON(fiber.Map{
 		"message":         fmt.Sprintf("Visitation %s updated successfully", request.Action),
 		"paused_duration": visitation.PausedDuration,
 		"is_running":      visitation.IsRunning,
 		"pause_time":      visitation.PauseTime,
 		"use_time":        visitation.UseTime,
+		"relay":           relayResult,
 	})
 }
 
@@ -830,13 +1048,8 @@ func VerifyPassword(c *fiber.Ctx) error {
 			"error": "User not found",
 		})
 	}
-	println("Hashed Password from DB:", user.Password)
-	println("Password from Request:", request.Password)
-	fmt.Printf("User: %+v\n", user)
-
 	// ตรวจสอบรหัสผ่านด้วย bcrypt
 	if !CheckPasswordHash(request.Password, user.Password) {
-		println("Password mismatch")
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"success": false,
 			"message": "Invalid password",
@@ -850,16 +1063,30 @@ func VerifyPassword(c *fiber.Ctx) error {
 	// }
 
 	// ถ้ารหัสผ่านถูกต้อง ปิดโต๊ะที่มีอยู่โดยตั้งค่า is_active = 0
+	posMutationMu.Lock()
+	defer posMutationMu.Unlock()
+
+	var visitation model.Visitation
+	if err := db.Db.Where("table_id = ? AND is_active = 1", request.TableID).First(&visitation).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Active table not found"})
+	}
+
 	result := db.Db.Model(&model.Visitation{}).
-		Where("table_id = ? AND is_active = 1", request.TableID).
+		Where("id = ? AND is_active = 1", visitation.ID).
 		Update("is_active", 0)
 
 	if result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
 	}
+	if result.RowsAffected == 0 {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Table is not active"})
+	}
+	relayResult := publishTableRelayByID(request.TableID, false, "verify-close")
+	broadcastPOSUpdate(visitation.DivisionID, "table-closed")
 
 	return c.JSON(fiber.Map{
 		"message": "Table closed successfully",
+		"relay":   relayResult,
 	})
 }
 
@@ -899,18 +1126,16 @@ func VerifyPasswordAndCloseTable(c *fiber.Ctx) error {
 			"error": "User not found",
 		})
 	}
-	println("Hashed Password from DB:", user.Password)
-	println("Password from Request:", request.Password)
-	fmt.Printf("User: %+v\n", user)
-
 	// ตรวจสอบรหัสผ่านด้วย bcrypt
 	if !CheckPasswordHash(request.Password, user.Password) {
-		println("Password mismatch")
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"success": false,
 			"message": "Invalid password",
 		})
 	}
+
+	posMutationMu.Lock()
+	defer posMutationMu.Unlock()
 
 	// ✅ ตรวจสอบว่ามีโต๊ะที่ยังเปิดอยู่หรือไม่ และเช็คค่า is_paid
 	var visitation model.Visitation
@@ -1034,8 +1259,12 @@ func VerifyPasswordAndCloseTable(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "ไม่สามารถปิดโต๊ะได้ (อาจถูกปิดไปแล้ว)"})
 	}
 
+	relayResult := publishTableRelayByID(request.TableID, false, "verify-close-table")
+	broadcastPOSUpdate(visitation.DivisionID, "table-closed")
+
 	return c.JSON(fiber.Map{
 		"message": "Table closed successfully",
+		"relay":   relayResult,
 	})
 }
 
@@ -1089,6 +1318,7 @@ func PaymentPending(c *fiber.Ctx) error {
 	if err := db.Db.Save(&visitation).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
+	broadcastPOSUpdate(visitation.DivisionID, "payment-pending")
 
 	// ส่ง response กลับไปยัง frontend
 	return c.JSON(fiber.Map{
@@ -1194,7 +1424,7 @@ func PaymentPending(c *fiber.Ctx) error {
 //			"service": service, // ส่งข้อมูล service กลับไปให้ frontend
 //		})
 //	}
-func OrderStore(c *fiber.Ctx) error {
+func legacyOrderStore(c *fiber.Ctx) error {
 	println("hello OrderStore")
 	uuid := c.Params("uuid")
 
@@ -1263,6 +1493,7 @@ func OrderStore(c *fiber.Ctx) error {
 					"error": "Failed to update service",
 				})
 			}
+			broadcastPOSUpdate(visitation.DivisionID, "order-updated")
 
 			return c.Status(fiber.StatusOK).JSON(fiber.Map{
 				"message": "Order updated successfully, stock returned",
@@ -1295,6 +1526,7 @@ func OrderStore(c *fiber.Ctx) error {
 					"error": "Failed to update existing service",
 				})
 			}
+			broadcastPOSUpdate(visitation.DivisionID, "order-updated")
 
 			return c.Status(fiber.StatusOK).JSON(fiber.Map{
 				"message": "Order updated successfully",
@@ -1339,6 +1571,7 @@ func OrderStore(c *fiber.Ctx) error {
 			"error": "Failed to create service",
 		})
 	}
+	broadcastPOSUpdate(visitation.DivisionID, "order-created")
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Order created successfully",
@@ -1346,7 +1579,7 @@ func OrderStore(c *fiber.Ctx) error {
 	})
 }
 
-func CalculateFIFO(productId uint, quantity int, db *gorm.DB) (float64, error) {
+func legacyCalculateFIFO(productId uint, quantity int, db *gorm.DB) (float64, error) {
 	shouldCutStock, err := ShouldManageStock(productId, db)
 	if err != nil {
 		return 0, err
@@ -1389,7 +1622,7 @@ func CalculateFIFO(productId uint, quantity int, db *gorm.DB) (float64, error) {
 
 	return totalFIFO_Cost, nil
 }
-func ReturnStockFIFO(productId uint, quantity int, db *gorm.DB) (float64, error) {
+func legacyReturnStockFIFO(productId uint, quantity int, db *gorm.DB) (float64, error) {
 	shouldCutStock, err := ShouldManageStock(productId, db)
 	if err != nil {
 		return 0, err
@@ -1442,28 +1675,85 @@ type ChangeTableRequest struct {
 }
 
 func ChangeTable(c *fiber.Ctx) error {
-	// ดึง UUID จาก path parameter
 	uuid := c.Params("uuid")
 
-	// ตรวจสอบและดึงข้อมูล visitation จาก UUID
-	var visitation model.Visitation
-	if err := db.Db.Where("uuid = ?", uuid).First(&visitation).Error; err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Record not found"})
-	}
-
-	// อ่านค่า ID โต๊ะใหม่จาก body
 	var request ChangeTableRequest
 	if err := c.BodyParser(&request); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
-
-	// อัปเดต table_id เป็น ID โต๊ะใหม่
-	visitation.TableID = request.NewTableID
-	if err := db.Db.Save(&visitation).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update record"})
+	if request.NewTableID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "New table is required"})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Table changed successfully"})
+	posMutationMu.Lock()
+	defer posMutationMu.Unlock()
+
+	var visitation model.Visitation
+	var oldTableID uint
+	err := db.Db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("uuid = ? AND is_active = 1 AND (is_paid = 0 OR is_paid = 2)", uuid).
+			First(&visitation).Error; err != nil {
+			return err
+		}
+		oldTableID = visitation.TableID
+
+		if oldTableID == request.NewTableID {
+			return errors.New("source and destination tables are the same")
+		}
+
+		var sourceTable model.SettingTable
+		if err := tx.First(&sourceTable, oldTableID).Error; err != nil {
+			return errTableNotFound
+		}
+
+		var destinationTable model.SettingTable
+		if err := tx.First(&destinationTable, request.NewTableID).Error; err != nil {
+			return errTableNotFound
+		}
+		if destinationTable.DivisionID != visitation.DivisionID {
+			return errors.New("destination table is not in the same division")
+		}
+		if math.Abs(sourceTable.Price-destinationTable.Price) > 0.000001 ||
+			math.Abs(sourceTable.Price2-destinationTable.Price2) > 0.000001 {
+			return errTablePriceMismatch
+		}
+
+		var activeCount int64
+		if err := tx.Model(&model.Visitation{}).
+			Where("table_id = ? AND is_active = 1 AND (is_paid = 0 OR is_paid = 2) AND deleted_at IS NULL", request.NewTableID).
+			Count(&activeCount).Error; err != nil {
+			return err
+		}
+		if activeCount > 0 {
+			return errTableAlreadyActive
+		}
+
+		return tx.Model(&model.Visitation{}).
+			Where("id = ? AND table_id = ? AND is_active = 1", visitation.ID, oldTableID).
+			Update("table_id", request.NewTableID).Error
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Record not found"})
+	}
+	if errors.Is(err, errTableNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Destination table not found"})
+	}
+	if errors.Is(err, errTableAlreadyActive) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Destination table is already active"})
+	}
+	if errors.Is(err, errTablePriceMismatch) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Destination table price does not match source table"})
+	}
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	broadcastPOSUpdate(visitation.DivisionID, "table-moved")
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message":   "Table changed successfully",
+		"relay_off": publishTableRelayByID(oldTableID, false, "change-table-off"),
+		"relay_on":  publishTableRelayByID(request.NewTableID, true, "change-table-on"),
+	})
 }
 
 func CalculateGameFee(timeInSeconds int64, price float64, price2 float64, isDiscounted bool) float64 {
@@ -1489,7 +1779,7 @@ func CalculateGameFee(timeInSeconds int64, price float64, price2 float64, isDisc
 	return math.Ceil(fee) // ปัดขึ้น
 }
 
-func ShouldManageStock(productID uint, tx *gorm.DB) (bool, error) {
+func legacyShouldManageStock(productID uint, tx *gorm.DB) (bool, error) {
 	var result struct {
 		IsStock uint8 `gorm:"column:is_stock"`
 	}

@@ -1,0 +1,119 @@
+name: snooker-demo
+
+networks:
+  snookersystembuild:
+
+x-backend-common: &backend-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  working_dir: /app
+  networks:
+    - snookersystembuild
+
+services:
+  site:
+    image: nginx:stable-alpine
+    container_name: nginx-snooker-demo
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DEMO1_HOST: ${DEMO1_HOST:-demo1.yssnooker.com}
+      DEMO2_HOST: ${DEMO2_HOST:-demo2.yssnooker.com}
+      DEMO3_HOST: ${DEMO3_HOST:-demo3.yssnooker.com}
+      DEMO4_HOST: ${DEMO4_HOST:-demo4.yssnooker.com}
+      BACKEND_DEMO1: golang-demo1
+      BACKEND_DEMO2: golang-demo2
+      BACKEND_DEMO3: golang-demo3
+      BACKEND_DEMO4: golang-demo4
+      UPLOAD_ROOT_DEMO1: /srv/uploads/demo1
+      UPLOAD_ROOT_DEMO2: /srv/uploads/demo2
+      UPLOAD_ROOT_DEMO3: /srv/uploads/demo3
+      UPLOAD_ROOT_DEMO4: /srv/uploads/demo4
+    volumes:
+      - ./nginx/default.demo.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/log:/var/log/nginx
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./data/uploads:/srv/uploads:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - golang-demo1
+      - golang-demo2
+      - golang-demo3
+      - golang-demo4
+    networks:
+      - snookersystembuild
+
+  golang-demo1:
+    <<: *backend-common
+    container_name: golang-snooker-demo1
+    volumes:
+      - ./data/demo1/snooker.db:/app/snooker.db
+      - ./data/uploads/demo1:/app/uploads
+      - ./data/demo1/license:/app/license
+      - ./data/demo1/config:/app/config
+    environment:
+      LICENSE_PATH: /app/license/license.json
+      SITE_ENV_PATH: /app/config/site.env
+      JWT_SECRET: ${JWT_SECRET_DEMO1:?Set JWT_SECRET_DEMO1 in .env}
+      MACHINE_ID: ${MACHINE_ID_DEMO1:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_DEMO1:-snooker-demo1}
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_DEMO1:-}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_DEMO1:-true}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_DEMO1:-false}
+
+  golang-demo2:
+    <<: *backend-common
+    container_name: golang-snooker-demo2
+    volumes:
+      - ./data/demo2/snooker.db:/app/snooker.db
+      - ./data/uploads/demo2:/app/uploads
+      - ./data/demo2/license:/app/license
+      - ./data/demo2/config:/app/config
+    environment:
+      LICENSE_PATH: /app/license/license.json
+      SITE_ENV_PATH: /app/config/site.env
+      JWT_SECRET: ${JWT_SECRET_DEMO2:?Set JWT_SECRET_DEMO2 in .env}
+      MACHINE_ID: ${MACHINE_ID_DEMO2:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_DEMO2:-snooker-demo2}
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_DEMO2:-}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_DEMO2:-true}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_DEMO2:-false}
+
+  golang-demo3:
+    <<: *backend-common
+    container_name: golang-snooker-demo3
+    volumes:
+      - ./data/demo3/snooker.db:/app/snooker.db
+      - ./data/uploads/demo3:/app/uploads
+      - ./data/demo3/license:/app/license
+      - ./data/demo3/config:/app/config
+    environment:
+      LICENSE_PATH: /app/license/license.json
+      SITE_ENV_PATH: /app/config/site.env
+      JWT_SECRET: ${JWT_SECRET_DEMO3:?Set JWT_SECRET_DEMO3 in .env}
+      MACHINE_ID: ${MACHINE_ID_DEMO3:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_DEMO3:-snooker-demo3}
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_DEMO3:-}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_DEMO3:-true}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_DEMO3:-false}
+
+  golang-demo4:
+    <<: *backend-common
+    container_name: golang-snooker-demo4
+    volumes:
+      - ./data/demo4/snooker.db:/app/snooker.db
+      - ./data/uploads/demo4:/app/uploads
+      - ./data/demo4/license:/app/license
+      - ./data/demo4/config:/app/config
+    environment:
+      LICENSE_PATH: /app/license/license.json
+      SITE_ENV_PATH: /app/config/site.env
+      JWT_SECRET: ${JWT_SECRET_DEMO4:?Set JWT_SECRET_DEMO4 in .env}
+      MACHINE_ID: ${MACHINE_ID_DEMO4:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_DEMO4:-snooker-demo4}
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_DEMO4:-}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_DEMO4:-true}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_DEMO4:-false}

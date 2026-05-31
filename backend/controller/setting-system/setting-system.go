@@ -3,6 +3,7 @@ package settingsystem
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/rainza999/fiber-test/db"
@@ -19,7 +20,13 @@ func GetSettingSystem(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Setting system not found"})
 	}
 
-	return c.JSON(setting) // ส่งข้อมูล setting กลับไป
+	return c.JSON(fiber.Map{
+		"ID":            setting.ID,
+		"LogoPath":      setting.LogoPath,
+		"LogoLoginPath": setting.LogoLoginPath,
+		"FirstTime":     setting.FirstTime,
+		"IsActive":      setting.IsActive,
+	})
 }
 func AnydataCompany(c *fiber.Ctx) error {
 	var companies []model.Company
@@ -43,13 +50,17 @@ func SaveSettingSystem(c *fiber.Ctx) error {
 	editReportPassword := c.FormValue("editReportPassword")
 
 	// ตั้งค่าและเข้ารหัสรหัสผ่านปิดโต๊ะ
-	if err := setting.SetCloseTablePassword(closeTablePassword); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash close table password"})
+	if strings.TrimSpace(closeTablePassword) != "" {
+		if err := setting.SetCloseTablePassword(closeTablePassword); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash close table password"})
+		}
 	}
 
 	// ตั้งค่าและเข้ารหัสรหัสผ่านสำหรับแก้ไขรายงาน
-	if err := setting.SetEditReportPassword(editReportPassword); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash edit report password"})
+	if strings.TrimSpace(editReportPassword) != "" {
+		if err := setting.SetEditReportPassword(editReportPassword); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash edit report password"})
+		}
 	}
 
 	file, err := c.FormFile("logo")

@@ -15,6 +15,7 @@ build/
 # Nginx logs + SSL (อย่าใส่ cert ลง repo)
 nginx/log/
 nginx/ssl/
+nginx/certs/
 nginx/certs-local/
 
 # Local env
@@ -24,10 +25,25 @@ nginx/certs-local/
 # Databases (อย่าใส่ SQLite ลง repo)
 data/
 *.db
+backups/
+tmp/
 
 # Go build artifacts (ถ้าบิลด์ local)
 backend/myapp
 backend/backend-dev.exe
 backend/backend-dev.exe~
 backend/license.json
+backend/activation_keys
+backend/activation_keys.csv
+backend/config/
+backend/tmp/
 *.db.backup-*
+
+# Local generated files
+backend/uploads/qr_om_1.jpg
+backend/uploads/ys-snooker-demo-logo*.png
+frontend-before-compiles/
+frontend_v2/
+relay-server/
+relay-server-no-modbus/
+waveshare-relay-server/
