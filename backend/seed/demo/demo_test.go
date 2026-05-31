@@ -46,6 +46,14 @@ func TestGenerateCreatesCleanUsableDemoDatabase(t *testing.T) {
 	assertCount(t, database, &model.StockEntry{}, int64(summary.OpeningStockItemCount))
 	assertCount(t, database, &model.InventoryTransaction{}, int64(summary.OpeningStockItemCount))
 
+	var settingSystem model.SettingSystem
+	if err := database.First(&settingSystem).Error; err != nil {
+		t.Fatal(err)
+	}
+	if settingSystem.FirstTime {
+		t.Fatal("clean demo database must hide the one-time system settings menu")
+	}
+
 	var game model.Product
 	if err := database.First(&game, 1).Error; err != nil {
 		t.Fatal(err)

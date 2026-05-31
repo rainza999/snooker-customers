@@ -240,7 +240,7 @@ func seedBaseData(tx *gorm.DB, config Config, summary *Summary) error {
 	settingSystem := model.SettingSystem{
 		LogoPath:      "uploads/YSdemo.png",
 		LogoLoginPath: "uploads/LOGO_Final_Stoke2.png",
-		FirstTime:     true,
+		FirstTime:     false,
 		IsActive:      1,
 	}
 	if err := settingSystem.SetCloseTablePassword(config.CloseTablePassword); err != nil {
