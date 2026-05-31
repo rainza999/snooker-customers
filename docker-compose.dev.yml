@@ -1,0 +1,99 @@
+name: snooker-dev
+
+networks:
+  snookersystembuild:
+
+x-backend-common: &backend-common
+  image: snooker-dev-backend:latest
+  build:
+    context: .
+    dockerfile: Dockerfile
+  working_dir: /app
+  networks:
+    - snookersystembuild
+
+services:
+  site:
+    image: nginx:stable-alpine
+    container_name: nginx-snooker-dev
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DEV_HOST: ${DEV_HOST:-dev.yssnooker.com}
+      RAIN_HOST: ${RAIN_HOST:-rain.yssnooker.com}
+      SMART_HOME_HOST: ${SMART_HOME_HOST:-smart-home.yssnooker.com}
+      ARAYASUJIN_HOST: ${ARAYASUJIN_HOST:-arayasujin.yssnooker.com}
+      BACKEND_RAIN: golang-rain
+      BACKEND_SMART_HOME: golang-smart-home
+      BACKEND_ARAYASUJIN: golang-arayasujin
+      UPLOAD_ROOT_RAIN: /srv/uploads/rain
+      UPLOAD_ROOT_SMART_HOME: /srv/uploads/smart-home
+      UPLOAD_ROOT_ARAYASUJIN: /srv/uploads/arayasujin
+    volumes:
+      - ./nginx/default.dev.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/log:/var/log/nginx
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./data/uploads:/srv/uploads:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - golang-rain
+      - golang-smart-home
+      - golang-arayasujin
+    networks:
+      - snookersystembuild
+
+  golang-rain:
+    <<: *backend-common
+    container_name: golang-snooker-dev-rain
+    volumes:
+      - ./data/rain/snooker.db:/app/snooker.db
+      - ./data/uploads/rain:/app/uploads
+      - ./data/rain/license:/app/license
+      - ./data/rain/config:/app/config
+    environment:
+      LICENSE_PATH: /app/license/license.json
+      SITE_ENV_PATH: /app/config/site.env
+      JWT_SECRET: ${JWT_SECRET_RAIN:?Set JWT_SECRET_RAIN in .env}
+      MACHINE_ID: ${MACHINE_ID_RAIN:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_RAIN:-snooker-dev-rain}
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_RAIN:-}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_RAIN:-true}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_RAIN:-false}
+
+  golang-smart-home:
+    <<: *backend-common
+    container_name: golang-snooker-dev-smart-home
+    volumes:
+      - ./data/smart-home/snooker.db:/app/snooker.db
+      - ./data/uploads/smart-home:/app/uploads
+      - ./data/smart-home/license:/app/license
+      - ./data/smart-home/config:/app/config
+    environment:
+      LICENSE_PATH: /app/license/license.json
+      SITE_ENV_PATH: /app/config/site.env
+      JWT_SECRET: ${JWT_SECRET_SMART_HOME:?Set JWT_SECRET_SMART_HOME in .env}
+      MACHINE_ID: ${MACHINE_ID_SMART_HOME:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_SMART_HOME:-snooker-dev-smart-home}
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_SMART_HOME:-}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_SMART_HOME:-true}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_SMART_HOME:-false}
+
+  golang-arayasujin:
+    <<: *backend-common
+    container_name: golang-snooker-dev-arayasujin
+    volumes:
+      - ./data/arayasujin/snooker.db:/app/snooker.db
+      - ./data/uploads/arayasujin:/app/uploads
+      - ./data/arayasujin/license:/app/license
+      - ./data/arayasujin/config:/app/config
+    environment:
+      LICENSE_PATH: /app/license/license.json
+      SITE_ENV_PATH: /app/config/site.env
+      JWT_SECRET: ${JWT_SECRET_ARAYASUJIN:?Set JWT_SECRET_ARAYASUJIN in .env}
+      MACHINE_ID: ${MACHINE_ID_ARAYASUJIN:-}
+      MACHINE_ID_SEED: ${MACHINE_ID_SEED_ARAYASUJIN:-snooker-dev-arayasujin}
+      SYSTEM_CONFIG_ALLOW_UPDATE: ${SYSTEM_CONFIG_ALLOW_UPDATE_ARAYASUJIN:-}
+      MQTT_RELAY_DISABLED: ${MQTT_RELAY_DISABLED_ARAYASUJIN:-true}
+      MQTT_RELAY_REQUIRED: ${MQTT_RELAY_REQUIRED_ARAYASUJIN:-false}
