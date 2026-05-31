@@ -64,6 +64,10 @@ data/demo4/snooker.db
 
 Do not mount one SQLite file into multiple containers.
 
+For a clean database without customer history, generate the template locally
+with `backend/cmd/seed-demo` and copy the resulting SQLite file once per site.
+See `docs/demo-clean-database.md`.
+
 ## Start or update
 
 ```bash
