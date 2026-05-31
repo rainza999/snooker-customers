@@ -67,7 +67,8 @@ Do not mount one SQLite file into multiple containers.
 ## Start or update
 
 ```bash
-docker compose -f docker-compose.demo.yml up -d --build
+docker compose -f docker-compose.demo.yml build golang-demo1
+docker compose -f docker-compose.demo.yml up -d --no-build
 docker compose -f docker-compose.demo.yml ps
 ```
 

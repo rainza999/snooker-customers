@@ -4,6 +4,7 @@ networks:
   snookersystembuild:
 
 x-backend-common: &backend-common
+  image: snooker-demo-backend:latest
   build:
     context: .
     dockerfile: Dockerfile
