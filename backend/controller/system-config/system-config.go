@@ -26,7 +26,7 @@ func Status(c *fiber.Ctx) error {
 
 func Save(c *fiber.Ctx) error {
 	required := relayConfigRequired()
-	if current := relay.CurrentStatus(false); current.Valid && !allowConfigUpdate() {
+	if current := relay.CurrentStatus(false); current.Configured && current.Valid && !allowConfigUpdate() {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": "system config is already valid",
 		})
@@ -55,7 +55,7 @@ func Save(c *fiber.Ctx) error {
 }
 
 func Skip(c *fiber.Ctx) error {
-	if current := relay.CurrentStatus(true); current.Valid && !allowConfigUpdate() {
+	if current := relay.CurrentStatus(true); current.Configured && current.Valid && !allowConfigUpdate() {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": "system config is currently valid",
 		})
