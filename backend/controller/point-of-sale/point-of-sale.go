@@ -1767,7 +1767,9 @@ func CalculateGameFee(timeInSeconds int64, price float64, price2 float64, isDisc
 
 	var fee float64
 
-	if totalMinutes <= 30 {
+	if isDiscounted && totalMinutes <= 60 {
+		fee = ratePerHour
+	} else if totalMinutes <= 30 {
 		fee = ratePerMinute * 30
 	} else if totalMinutes <= 60 {
 		fee = ratePerHour

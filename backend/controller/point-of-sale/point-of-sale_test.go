@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -302,5 +303,29 @@ func TestEventsStreamsInitialSync(t *testing.T) {
 	}
 	if strings.TrimSpace(eventLine) != "event: pos-sync" {
 		t.Fatalf("unexpected event type: %q", eventLine)
+	}
+}
+
+func TestCalculateGameFeeKeepsPracticeAtFullFirstHour(t *testing.T) {
+	tests := []struct {
+		name         string
+		seconds      int64
+		isDiscounted bool
+		want         float64
+	}{
+		{name: "regular under 30 minutes charges half hour", seconds: 29 * 60, isDiscounted: false, want: 50},
+		{name: "regular over 30 minutes charges full hour", seconds: 31 * 60, isDiscounted: false, want: 100},
+		{name: "practice under 30 minutes charges full practice hour", seconds: 10 * 60, isDiscounted: true, want: 80},
+		{name: "practice at 60 minutes charges full practice hour", seconds: 60 * 60, isDiscounted: true, want: 80},
+		{name: "practice over 60 minutes prorates after first hour", seconds: 75 * 60, isDiscounted: true, want: 100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CalculateGameFee(tt.seconds, 100, 80, tt.isDiscounted)
+			if math.Abs(got-tt.want) > 0.0001 {
+				t.Fatalf("CalculateGameFee() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
