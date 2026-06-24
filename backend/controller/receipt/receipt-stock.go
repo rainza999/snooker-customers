@@ -13,10 +13,13 @@ import (
 )
 
 var (
-	errReceiptAlreadySaved = errors.New("receipt has already been saved")
-	errReceiptHasStock     = errors.New("receipt item already has stock entries")
-	errReceiptHasNoItems   = errors.New("receipt has no items")
+	errReceiptAlreadySaved                   = errors.New("receipt has already been saved")
+	errReceiptNumberAlreadyExistsForSupplier = errors.New("receipt number already exists for supplier")
+	errReceiptHasStock                       = errors.New("receipt item already has stock entries")
+	errReceiptHasNoItems                     = errors.New("receipt has no items")
 )
+
+const receiptNumberAlreadyExistsForSupplierMessage = "เลขที่ใบสั่งซื้อซ้ำของผู้จำหน่ายนี้"
 
 func DeleteReceipt(c *fiber.Ctx) error {
 	id := c.Params("id")
@@ -95,7 +98,7 @@ func SubmitReceipt(c *fiber.Ctx) error {
 			}
 		}
 		if savedReceipt.ReceiptStatus != "draft" {
-			return errReceiptAlreadySaved
+			return errReceiptNumberAlreadyExistsForSupplier
 		}
 
 		findErr = tx.Where("receipt_id = ? AND product_id = ?", savedReceipt.ID, draft.ProductID).
@@ -121,8 +124,14 @@ func SubmitReceipt(c *fiber.Ctx) error {
 		savedItem.UnitPrice = savedItem.TotalPrice / float64(savedItem.Quantity)
 		return tx.Save(&savedItem).Error
 	})
-	if errors.Is(err, errReceiptAlreadySaved) || isUniqueConstraintError(err) {
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Cannot add or update items because this receipt has already been saved or duplicated"})
+	if errors.Is(err, errReceiptNumberAlreadyExistsForSupplier) || isUniqueConstraintError(err) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":   "receipt_number_already_exists_for_supplier",
+			"message": receiptNumberAlreadyExistsForSupplierMessage,
+		})
+	}
+	if errors.Is(err, errReceiptAlreadySaved) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Cannot add or update items because this receipt has already been saved"})
 	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save receipt item"})

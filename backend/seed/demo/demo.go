@@ -442,6 +442,6 @@ func baselineMenus() []menuSeed {
 		{ID: 19, Name: "รายงานสินค้าคงเหลือ", Route: "/product-stocks", Level: 1, Relation: 10, Order: 4, Icon: "AppsIcon", Permissions: []permissionSeed{{Name: "product-stocks-access", Title: "เข้าถึง"}, {Name: "product-stocks-edit", Title: "แก้ไขข้อมูล"}, {Name: "product-stocks-delete", Title: "ลบข้อมูล"}}},
 		{ID: 20, Name: "รายงานความเคลื่อนไหวของสินค้า", Route: "/product-transactions", Level: 1, Relation: 10, Order: 5, Icon: "AppsIcon", Permissions: []permissionSeed{{Name: "product-transactions-access", Title: "เข้าถึง"}, {Name: "product-transactions-edit", Title: "แก้ไขข้อมูล"}, {Name: "product-transactions-delete", Title: "ลบข้อมูล"}}},
 		{ID: 21, Name: "ตั้งค่าการคิดเงิน", Route: "/setting-point-of-sales", Level: 1, Relation: 2, Order: 7, Icon: "AppsIcon", Permissions: []permissionSeed{{Name: "setting-point-of-sale-access", Title: "เข้าถึง"}}},
-		{ID: 22, Name: "รายงานยอดขายปิดบิล", Route: "/sale-report-closes", Level: 1, Relation: 10, Order: 6, Icon: "AppsIcon", Permissions: []permissionSeed{{Name: "sale-report-closes-access", Title: "เข้าถึง"}}},
+		{ID: 22, Name: "รายงานยอดขายเทสระบบ", Route: "/sale-report-closes", Level: 1, Relation: 10, Order: 6, Icon: "AppsIcon", Permissions: []permissionSeed{{Name: "sale-report-closes-access", Title: "เข้าถึง"}}},
 	}
 }

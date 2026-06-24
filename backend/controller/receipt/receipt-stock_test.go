@@ -3,8 +3,10 @@ package receipt
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -53,6 +55,12 @@ func setupReceiptTestDB(t *testing.T) (*fiber.App, model.Supplier, model.Product
 
 func postJSON(t *testing.T, app *fiber.App, method, path, body string) int {
 	t.Helper()
+	status, _ := postJSONResponse(t, app, method, path, body)
+	return status
+}
+
+func postJSONResponse(t *testing.T, app *fiber.App, method, path, body string) (int, string) {
+	t.Helper()
 	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	request.Header.Set("Content-Type", "application/json")
 	response, err := app.Test(request, -1)
@@ -60,7 +68,11 @@ func postJSON(t *testing.T, app *fiber.App, method, path, body string) int {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	defer response.Body.Close()
-	return response.StatusCode
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	return response.StatusCode, string(responseBody)
 }
 
 func TestFinalizeReceiptConcurrentRequestCreatesOneStockLot(t *testing.T) {
@@ -140,6 +152,30 @@ func TestSubmitReceiptAllowsSameNumberForDifferentSuppliers(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("receipt count: got %d want 2", count)
+	}
+}
+
+func TestSubmitReceiptRejectsSavedNumberForSameSupplierWithFriendlyMessage(t *testing.T) {
+	app, supplier, product := setupReceiptTestDB(t)
+	receipt := model.ProductReceipt{SupplierID: supplier.ID, ReceiptNumber: "INV-SAVED", ReceiptStatus: "save", IsActive: 1}
+	if err := db.Db.Create(&receipt).Error; err != nil {
+		t.Fatalf("create saved receipt: %v", err)
+	}
+
+	body := fmt.Sprintf(
+		`{"drafts":{"supplier":%d,"product":%d,"quantity":1,"totalPrice":10,"purchaseOrderNumber":"INV-SAVED","status":"draft"}}`,
+		supplier.ID,
+		product.ID,
+	)
+	status, responseBody := postJSONResponse(t, app, "POST", "/receipts/submit", body)
+	if status != fiber.StatusConflict {
+		t.Fatalf("submit status: got %d want 409; body=%s", status, responseBody)
+	}
+	if !strings.Contains(responseBody, "receipt_number_already_exists_for_supplier") {
+		t.Fatalf("response body missing duplicate error code: %s", responseBody)
+	}
+	if !strings.Contains(responseBody, receiptNumberAlreadyExistsForSupplierMessage) {
+		t.Fatalf("response body missing friendly message: %s", responseBody)
 	}
 }
 
