@@ -35,12 +35,25 @@ import (
 var Db *gorm.DB
 
 func InitDB() {
-	execPath, err := os.Executable()
-	if err != nil {
-		panic(err)
+	dbPath := os.Getenv("SQLITE_PATH")
+	if dbPath == "" {
+		execPath, err := os.Executable()
+		if err != nil {
+			panic(err)
+		}
+		execDir := filepath.Dir(execPath)
+		dbPath = filepath.Join(execDir, "snooker.db")
 	}
-	execDir := filepath.Dir(execPath)
-	dbPath := filepath.Join(execDir, "snooker.db")
+
+	var err error
+	/*
+		execPath, err := os.Executable()
+		if err != nil {
+			panic(err)
+		}
+		execDir := filepath.Dir(execPath)
+		dbPath := filepath.Join(execDir, "snooker.db")
+	*/
 
 	// ใส่ key เข้าไปใน DSN เหมือนเดิม
 	dsn := "file:" + dbPath + "?_pragma_key=rainza999"

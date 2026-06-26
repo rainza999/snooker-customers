@@ -42,6 +42,7 @@ func main() {
 	log.Printf("Current time in GMT+7: %v", now)
 
 	db.InitDB()
+	db.Db.AutoMigrate(&model.SettingPointOfSale{})
 	if err := inventory.Migrate(db.Db); err != nil {
 		log.Fatalf("Failed to migrate inventory integrity schema: %v", err)
 	}
@@ -136,6 +137,9 @@ func main() {
 
 	// 👉 ถ้า uploads อยู่ภายใต้โฟลเดอร์เดียวกับ .exe
 	uploadDir := filepath.Join(rootDir, "uploads")
+	if configuredUploadDir := os.Getenv("UPLOAD_PATH"); configuredUploadDir != "" {
+		uploadDir = configuredUploadDir
+	}
 
 	// 👉 ถ้า uploads อยู่ในโฟลเดอร์ resources ที่อยู่คู่กับ .exe
 	// uploadDir := filepath.Join(rootDir, "resources", "uploads")
@@ -151,7 +155,11 @@ func main() {
 	routes.Setup(app)
 
 	// Start server
-	log.Fatal(app.Listen(":8000"))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8000"
+	}
+	log.Fatal(app.Listen(":" + port))
 	log.Fatal("rain start!")
 }
 
