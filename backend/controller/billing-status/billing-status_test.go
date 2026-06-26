@@ -66,3 +66,27 @@ func TestStatusShutsDownWhenConfigured(t *testing.T) {
 		t.Fatalf("unexpected body: %+v", body)
 	}
 }
+
+func TestStatusPausesWhenSiteIsPaused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "site.env")
+	t.Setenv("SITE_ENV_PATH", path)
+	content := "SITE_STATUS=paused\nMAINTENANCE_REASON=ปิดปรับปรุงชั่วคราว\nBILLING_STATUS=ok\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	app := fiber.New()
+	app.Get("/billing-status", Status)
+	resp, err := app.Test(httptest.NewRequest("GET", "/billing-status", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body statusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Enabled || body.Status != "paused" || body.Action != "pause" || body.Message != "ปิดปรับปรุงชั่วคราว" {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}

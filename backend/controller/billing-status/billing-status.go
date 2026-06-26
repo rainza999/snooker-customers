@@ -27,9 +27,15 @@ func Status(c *fiber.Ctx) error {
 	action := strings.ToLower(valueOr(firstValue(values, "BILLING_ACTION"), "warn"))
 	status := strings.ToLower(valueOr(firstValue(values, "BILLING_STATUS"), "ok"))
 	message := firstValue(values, "BILLING_MESSAGE")
+	siteStatus := strings.ToLower(valueOr(firstValue(values, "SITE_STATUS"), "active"))
+	maintenanceReason := firstValue(values, "MAINTENANCE_REASON")
 
 	dueOrPast, daysOverdue := dueState(dueDate)
-	if status == "ok" && dueOrPast {
+	if siteStatus == "paused" {
+		status = "paused"
+		action = "pause"
+		message = maintenanceReason
+	} else if status == "ok" && dueOrPast {
 		if action == "shutdown" {
 			status = "shutdown"
 		} else {
@@ -41,6 +47,9 @@ func Status(c *fiber.Ctx) error {
 	}
 	if message == "" && status == "shutdown" {
 		message = "ระบบถูกระงับชั่วคราว กรุณาติดต่อผู้ดูแล"
+	}
+	if message == "" && status == "paused" {
+		message = "ระบบหยุดให้บริการชั่วคราว กรุณาติดต่อผู้ดูแล"
 	}
 
 	return c.JSON(statusResponse{
