@@ -144,6 +144,7 @@ func isPublicPath(path string) bool {
 		"/activate",
 		"/license-status",
 		"/machine-id",
+		"/billing-status",
 		"/system-config",
 	}
 	for _, prefix := range publicPrefixes {

@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/rainza999/fiber-test/controller/auth"
+	billingstatus "github.com/rainza999/fiber-test/controller/billing-status"
 	"github.com/rainza999/fiber-test/controller/division"
 
 	helper "github.com/rainza999/fiber-test/controller/helper"
@@ -615,6 +616,7 @@ func Setup(app *fiber.App) {
 	app.Post("/activate", license.ActivateLicense)
 	app.Get("/license-status", license.CheckLicenseStatus)
 	app.Get("/machine-id", license.GetMachineID)
+	app.Get("/billing-status", billingstatus.Status)
 	app.Get("/system-config/status", systemconfig.Status)
 	app.Post("/system-config/save", systemconfig.Save)
 	app.Post("/system-config/skip", systemconfig.Skip)
