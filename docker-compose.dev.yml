@@ -8,6 +8,12 @@ x-backend-common: &backend-common
   build:
     context: .
     dockerfile: Dockerfile
+    args:
+      APP_VERSION: ${APP_VERSION:-1.0.2}
+      APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+      APP_GIT_BRANCH: ${APP_GIT_BRANCH:-main}
+      APP_DEPLOY_DATE: ${APP_DEPLOY_DATE:-}
+      APP_SOURCE: ${APP_SOURCE:-dev-stack}
   working_dir: /app
   networks:
     - snookersystembuild

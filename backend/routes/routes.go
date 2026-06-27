@@ -10,6 +10,7 @@ import (
 	// "github.com/go-redis/redis/v8"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
+	appinfo "github.com/rainza999/fiber-test/controller/app-info"
 	"github.com/rainza999/fiber-test/controller/auth"
 	billingstatus "github.com/rainza999/fiber-test/controller/billing-status"
 	"github.com/rainza999/fiber-test/controller/division"
@@ -614,6 +615,7 @@ func Setup(app *fiber.App) {
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.SendStatus(200)
 	})
+	app.Get("/app-info", appinfo.Info)
 	app.Post("/activate", license.ActivateLicense)
 	app.Get("/license-status", license.CheckLicenseStatus)
 	app.Get("/machine-id", license.GetMachineID)
