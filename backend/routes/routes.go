@@ -35,6 +35,7 @@ import (
 	"github.com/rainza999/fiber-test/controller/category"
 	"github.com/rainza999/fiber-test/controller/dashboard"
 	"github.com/rainza999/fiber-test/controller/product"
+	promotion "github.com/rainza999/fiber-test/controller/promotion"
 
 	middleware "github.com/rainza999/fiber-test/controller/middleware"
 	"github.com/rainza999/fiber-test/db"
@@ -782,6 +783,7 @@ func Setup(app *fiber.App) {
 	pointofsalesGroup.Post("/api/verify-password-and-close-table", pointofsale.VerifyPasswordAndCloseTable)
 	pointofsalesGroup.Post("/api/updatePausedDurationTime", pointofsale.UpdatePausedDurationTime)
 	pointofsalesGroup.Get("/:uuid/visitation", pointofsale.GetVisitationByUUID)
+	pointofsalesGroup.Get("/:uuid/visitation/payment-quote", pointofsale.PaymentQuote)
 	pointofsalesGroup.Put("/:uuid/visitation/payment", pointofsale.PaymentStore)
 	pointofsalesGroup.Get("/:uuid/visitation/payment-pending", pointofsale.PaymentPending)
 	pointofsalesGroup.Post("/:uuid/visitation/order/store", pointofsale.OrderStore)
@@ -805,6 +807,13 @@ func Setup(app *fiber.App) {
 	productsGroup.Post("/:id/stock-adjustments", middleware.PermissionMiddleware("product-receipt-reports-edit"), product.AdjustStock)
 	productsGroup.Get("/:id/stock-transactions", middleware.PermissionMiddleware("product-transactions-access"), product.StockTransactions)
 
+	promotionsGroup := app.Group("/promotions", checkJWTHeader, middleware.PermissionMiddleware("promotions-access"))
+	promotionsGroup.Get("/anyData", promotion.AnyData)
+	promotionsGroup.Post("/store", middleware.PermissionMiddleware("promotions-create-access"), promotion.Store)
+	promotionsGroup.Get("/:id/edit", middleware.PermissionMiddleware("promotions-edit-access"), promotion.Edit)
+	promotionsGroup.Put("/:id/update", middleware.PermissionMiddleware("promotions-edit-access"), promotion.Update)
+	promotionsGroup.Delete("/:id/delete", middleware.PermissionMiddleware("promotions-delete-access"), promotion.Delete)
+
 	saleReport := app.Group("/sale-reports", checkJWTHeader, middleware.PermissionMiddleware("sale-reports-access"))
 	saleReport.Get("/daily", saleofreport.GetDailySalesReport) // ดึงรายงานแบบวัน
 	saleReport.Get("/monthly", saleofreport.GetMonthlySalesReport)
@@ -821,6 +830,10 @@ func Setup(app *fiber.App) {
 	saleProductReport := app.Group("/sale-product-reports", checkJWTHeader, middleware.PermissionMiddleware("sale-product-reports-access"))
 	saleProductReport.Get("/daily", saleofreport.GetDailySaleProductReport) // ดึงรายงานแบบวัน
 	saleProductReport.Get("/monthly", saleofreport.GetMonthlySaleProductReport)
+
+	paymentReport := app.Group("/payment-reports", checkJWTHeader, middleware.PermissionMiddleware("payment-reports-access"))
+	paymentReport.Get("/daily", saleofreport.GetDailyPaymentReport)
+	paymentReport.Get("/monthly", saleofreport.GetMonthlyPaymentReport)
 	// saleReport.Get("/:uuid/daily/edit", saleofreport.GetDailySalesReportDetailEdit)
 	// point-of-sales/visitation/${tableIndex}/time/${minutes}
 	// pointofsalesGroup.Post("/:id/:time")

@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"gorm.io/gorm"
 
+	"github.com/rainza999/fiber-test/billing"
 	AuthController "github.com/rainza999/fiber-test/controller/auth"
 	"github.com/rainza999/fiber-test/db"
 	"github.com/rainza999/fiber-test/inventory"
@@ -45,6 +46,9 @@ func main() {
 	db.Db.AutoMigrate(&model.SettingPointOfSale{})
 	if err := inventory.Migrate(db.Db); err != nil {
 		log.Fatalf("Failed to migrate inventory integrity schema: %v", err)
+	}
+	if err := billing.Migrate(db.Db); err != nil {
+		log.Fatalf("Failed to migrate billing schema: %v", err)
 	}
 
 	// db.Db.AutoMigrate(&model.ActivationKey{})

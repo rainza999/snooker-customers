@@ -13,14 +13,17 @@ import (
 
 // Struct สำหรับแสดงข้อมูลรายงานการขาย (แยกออกจากโครงสร้างในฐานข้อมูล)
 type VisitationReport struct {
-	TableName  string  `json:"table_name"`
-	BillNumber string  `json:"bill_number"`
-	StartDate  string  `json:"start_date"`
-	StartTime  string  `json:"start_time"`
-	EndDate    string  `json:"end_date"`
-	EndTime    string  `json:"end_time"`
-	TotalBill  float64 `json:"total_bill"`
-	Uuid       string  `json:"uuid"`
+	TableName      string  `json:"table_name"`
+	BillNumber     string  `json:"bill_number"`
+	StartDate      string  `json:"start_date"`
+	StartTime      string  `json:"start_time"`
+	EndDate        string  `json:"end_date"`
+	EndTime        string  `json:"end_time"`
+	TotalBill      float64 `json:"total_bill"`
+	CashAmount     float64 `json:"cash_amount"`
+	TransferAmount float64 `json:"transfer_amount"`
+	CreditAmount   float64 `json:"credit_amount"`
+	Uuid           string  `json:"uuid"`
 }
 
 // ฟังก์ชันดึงข้อมูลรายงานยอดขายรายวัน
@@ -37,18 +40,44 @@ func GetDailySalesReport(c *fiber.Ctx) error {
 
 	// Query ข้อมูลจากฐานข้อมูล
 	var visitations []struct {
-		BillCode     string    `json:"bill_code"`
-		StartTime    time.Time `json:"start_time"`
-		EndTime      time.Time `json:"end_time"`
-		NetPrice     float64   `json:"net_price"`
-		TotalCost    float64   `json:"total_cost"`
-		TableID      uint      `json:"table_id"`
-		PaidAmount   float64   `json:"paid_amount"`
-		ChangeAmount float64   `json:"change_amount"`
-		Uuid         string    `json:"uuid"`
+		BillCode       string    `json:"bill_code"`
+		StartTime      time.Time `json:"start_time"`
+		EndTime        time.Time `json:"end_time"`
+		NetPrice       float64   `json:"net_price"`
+		TotalCost      float64   `json:"total_cost"`
+		TableID        uint      `json:"table_id"`
+		PaidAmount     float64   `json:"paid_amount"`
+		ChangeAmount   float64   `json:"change_amount"`
+		CashAmount     float64   `json:"cash_amount"`
+		TransferAmount float64   `json:"transfer_amount"`
+		CreditAmount   float64   `json:"credit_amount"`
+		Uuid           string    `json:"uuid"`
 	}
-	err := db.Db.Raw(`SELECT bill_code, start_time, end_time, net_price, total_cost, paid_amount, change_amount, table_id, uuid
-		FROM visitations WHERE (start_time BETWEEN ? AND ? ) and (is_paid = 1) and deleted_at is null and is_active = 1`, startDate, endDate).Scan(&visitations).Error
+	err := db.Db.Raw(`
+		SELECT
+			v.bill_code,
+			v.start_time,
+			v.end_time,
+			v.net_price,
+			v.total_cost,
+			v.paid_amount,
+			v.change_amount,
+			v.table_id,
+			v.uuid,
+			COALESCE(SUM(CASE WHEN bp.method = 'cash' THEN bp.amount ELSE 0 END), 0) AS cash_amount,
+			COALESCE(SUM(CASE WHEN bp.method = 'transfer' THEN bp.amount ELSE 0 END), 0) AS transfer_amount,
+			COALESCE(SUM(CASE WHEN bp.method = 'credit' THEN bp.amount ELSE 0 END), 0) AS credit_amount
+		FROM visitations v
+		LEFT JOIN bill_payments bp
+			ON bp.visitation_id = v.id
+			AND bp.deleted_at IS NULL
+			AND bp.is_active = 1
+		WHERE (v.start_time BETWEEN ? AND ? )
+			AND (v.is_paid = 1)
+			AND v.deleted_at IS NULL
+			AND v.is_active = 1
+		GROUP BY v.id
+		ORDER BY v.start_time ASC`, startDate, endDate).Scan(&visitations).Error
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -57,14 +86,17 @@ func GetDailySalesReport(c *fiber.Ctx) error {
 	var reportData []VisitationReport
 	for _, v := range visitations {
 		reportData = append(reportData, VisitationReport{
-			TableName:  getTableName(v.TableID), // ฟังก์ชันสำหรับดึงชื่อโต๊ะ
-			BillNumber: v.BillCode,
-			StartDate:  v.StartTime.Format("2006-01-02"), // แปลงเป็น "ปี-เดือน-วัน"
-			StartTime:  v.StartTime.Format("15:04"),      // แปลงเป็น "HH:MM"
-			EndDate:    v.EndTime.Format("2006-01-02"),   // แปลงเป็น "ปี-เดือน-วัน"
-			EndTime:    v.EndTime.Format("15:04"),        // แปลงเป็น "HH:MM"
-			TotalBill:  v.NetPrice,
-			Uuid:       v.Uuid,
+			TableName:      getTableName(v.TableID), // ฟังก์ชันสำหรับดึงชื่อโต๊ะ
+			BillNumber:     v.BillCode,
+			StartDate:      v.StartTime.Format("2006-01-02"), // แปลงเป็น "ปี-เดือน-วัน"
+			StartTime:      v.StartTime.Format("15:04"),      // แปลงเป็น "HH:MM"
+			EndDate:        v.EndTime.Format("2006-01-02"),   // แปลงเป็น "ปี-เดือน-วัน"
+			EndTime:        v.EndTime.Format("15:04"),        // แปลงเป็น "HH:MM"
+			TotalBill:      v.NetPrice,
+			CashAmount:     v.CashAmount,
+			TransferAmount: v.TransferAmount,
+			CreditAmount:   v.CreditAmount,
+			Uuid:           v.Uuid,
 		})
 	}
 
@@ -162,9 +194,17 @@ func GetDailySalesReportDetail(c *fiber.Ctx) error {
 	}
 
 	// ส่งข้อมูลกลับไปในรูปแบบ JSON
+	paymentDetails, err := getBillPaymentDetails(visitation.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to load payment details",
+		})
+	}
+
 	return c.JSON(fiber.Map{
 		"visitation":     visitation,
 		"serviceDetails": serviceDetails,
+		"payments":       paymentDetails,
 	})
 }
 
@@ -435,15 +475,18 @@ func GetDailySalesCloseReport(c *fiber.Ctx) error {
 
 	// Query ข้อมูลจากฐานข้อมูล
 	var visitations []struct {
-		BillCode     string    `json:"bill_code"`
-		StartTime    time.Time `json:"start_time"`
-		EndTime      time.Time `json:"end_time"`
-		NetPrice     float64   `json:"net_price"`
-		TotalCost    float64   `json:"total_cost"`
-		TableID      uint      `json:"table_id"`
-		PaidAmount   float64   `json:"paid_amount"`
-		ChangeAmount float64   `json:"change_amount"`
-		Uuid         string    `json:"uuid"`
+		BillCode       string    `json:"bill_code"`
+		StartTime      time.Time `json:"start_time"`
+		EndTime        time.Time `json:"end_time"`
+		NetPrice       float64   `json:"net_price"`
+		TotalCost      float64   `json:"total_cost"`
+		TableID        uint      `json:"table_id"`
+		PaidAmount     float64   `json:"paid_amount"`
+		ChangeAmount   float64   `json:"change_amount"`
+		CashAmount     float64   `json:"cash_amount"`
+		TransferAmount float64   `json:"transfer_amount"`
+		CreditAmount   float64   `json:"credit_amount"`
+		Uuid           string    `json:"uuid"`
 	}
 	// err := db.Db.Raw(`SELECT bill_code, start_time, end_time, net_price, total_cost, paid_amount, change_amount, table_id, uuid
 	// 	FROM visitations WHERE (start_time BETWEEN ? AND ? )  and deleted_at is null and is_active = 0`, startDate, endDate).Scan(&visitations).Error
@@ -457,12 +500,26 @@ func GetDailySalesCloseReport(c *fiber.Ctx) error {
 		v.paid_amount, 
 		v.change_amount, 
 		v.table_id, 
-		v.uuid
+		v.uuid,
+		COALESCE(bp.cash_amount, 0) AS cash_amount,
+		COALESCE(bp.transfer_amount, 0) AS transfer_amount,
+		COALESCE(bp.credit_amount, 0) AS credit_amount
 	FROM visitations v
 	LEFT JOIN services s 
 		ON v.id = s.visitation_id 
 		AND s.deleted_at IS NULL 
 		AND (s.status = 'paid' OR s.status = 'draft')
+	LEFT JOIN (
+		SELECT
+			visitation_id,
+			SUM(CASE WHEN method = 'cash' THEN amount ELSE 0 END) AS cash_amount,
+			SUM(CASE WHEN method = 'transfer' THEN amount ELSE 0 END) AS transfer_amount,
+			SUM(CASE WHEN method = 'credit' THEN amount ELSE 0 END) AS credit_amount
+		FROM bill_payments
+		WHERE deleted_at IS NULL
+			AND is_active = 1
+		GROUP BY visitation_id
+	) bp ON bp.visitation_id = v.id
 	WHERE 
 		v.start_time BETWEEN ? AND ?
 		AND v.deleted_at IS NULL
@@ -482,14 +539,17 @@ func GetDailySalesCloseReport(c *fiber.Ctx) error {
 	var reportData []VisitationReport
 	for _, v := range visitations {
 		reportData = append(reportData, VisitationReport{
-			TableName:  getTableName(v.TableID), // ฟังก์ชันสำหรับดึงชื่อโต๊ะ
-			BillNumber: v.BillCode,
-			StartDate:  v.StartTime.Format("2006-01-02"), // แปลงเป็น "ปี-เดือน-วัน"
-			StartTime:  v.StartTime.Format("15:04"),      // แปลงเป็น "HH:MM"
-			EndDate:    v.EndTime.Format("2006-01-02"),   // แปลงเป็น "ปี-เดือน-วัน"
-			EndTime:    v.EndTime.Format("15:04"),        // แปลงเป็น "HH:MM"
-			TotalBill:  v.NetPrice,
-			Uuid:       v.Uuid,
+			TableName:      getTableName(v.TableID), // ฟังก์ชันสำหรับดึงชื่อโต๊ะ
+			BillNumber:     v.BillCode,
+			StartDate:      v.StartTime.Format("2006-01-02"), // แปลงเป็น "ปี-เดือน-วัน"
+			StartTime:      v.StartTime.Format("15:04"),      // แปลงเป็น "HH:MM"
+			EndDate:        v.EndTime.Format("2006-01-02"),   // แปลงเป็น "ปี-เดือน-วัน"
+			EndTime:        v.EndTime.Format("15:04"),        // แปลงเป็น "HH:MM"
+			TotalBill:      v.NetPrice,
+			CashAmount:     v.CashAmount,
+			TransferAmount: v.TransferAmount,
+			CreditAmount:   v.CreditAmount,
+			Uuid:           v.Uuid,
 		})
 	}
 
@@ -574,9 +634,17 @@ func GetDailySalesCloseReportDetail(c *fiber.Ctx) error {
 	}
 
 	// ส่งข้อมูลกลับไปในรูปแบบ JSON
+	paymentDetails, err := getBillPaymentDetails(visitation.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to load payment details",
+		})
+	}
+
 	return c.JSON(fiber.Map{
 		"visitation":     visitation,
 		"serviceDetails": serviceDetails,
+		"payments":       paymentDetails,
 	})
 }
 
@@ -632,4 +700,122 @@ ORDER BY DATE(datetime(v.start_time, '+7 hours'));
 
 	// return c.JSON(report)
 	return c.JSON(fiber.Map{"report": report})
+}
+
+func GetDailyPaymentReport(c *fiber.Ctx) error {
+	startDate, endDate := c.Query("start_date"), c.Query("end_date")
+	if err := validateDateRange(startDate, endDate); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return paymentReportByRange(c, startDate+" 00:00:00", endDate+" 23:59:59")
+}
+
+func GetMonthlyPaymentReport(c *fiber.Ctx) error {
+	selectedMonth := c.Query("month")
+	startOfMonth, err := time.Parse("2006-01", selectedMonth)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid month format"})
+	}
+	endOfMonth := startOfMonth.AddDate(0, 1, 0)
+	return paymentReportByRange(c, startOfMonth.Format("2006-01-02 15:04:05"), endOfMonth.Format("2006-01-02 15:04:05"))
+}
+
+func paymentReportByRange(c *fiber.Ctx, startAt string, endAt string) error {
+	var rows []struct {
+		BillCode  string    `json:"bill_code"`
+		TableName string    `json:"table_name"`
+		PaidAt    time.Time `json:"paid_at"`
+		Method    string    `json:"method"`
+		Amount    float64   `json:"amount"`
+		Note      string    `json:"note"`
+	}
+	err := db.Db.Raw(`
+		SELECT
+			v.bill_code,
+			st.name AS table_name,
+			bp.paid_at,
+			bp.method,
+			bp.amount,
+			bp.note
+		FROM bill_payments bp
+		JOIN visitations v ON v.id = bp.visitation_id
+		LEFT JOIN setting_tables st ON st.id = v.table_id
+		WHERE bp.deleted_at IS NULL
+			AND bp.is_active = 1
+			AND v.deleted_at IS NULL
+			AND v.is_paid = 1
+			AND bp.paid_at >= ?
+			AND bp.paid_at <= ?
+		ORDER BY bp.paid_at ASC, bp.id ASC
+	`, startAt, endAt).Scan(&rows).Error
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load payment report"})
+	}
+
+	details := make([]fiber.Map, 0, len(rows))
+	totals := map[string]float64{
+		"cash":     0,
+		"transfer": 0,
+		"credit":   0,
+	}
+	total := 0.0
+	for _, row := range rows {
+		totals[row.Method] = totals[row.Method] + row.Amount
+		total += row.Amount
+		details = append(details, fiber.Map{
+			"bill_code":  row.BillCode,
+			"table_name": row.TableName,
+			"paid_at":    row.PaidAt.Format("2006-01-02 15:04:05"),
+			"method":     row.Method,
+			"amount":     row.Amount,
+			"note":       row.Note,
+		})
+	}
+	return c.JSON(fiber.Map{
+		"details": details,
+		"totals": fiber.Map{
+			"cash":     totals["cash"],
+			"transfer": totals["transfer"],
+			"credit":   totals["credit"],
+			"all":      total,
+		},
+	})
+}
+
+type BillPaymentReport struct {
+	Method string  `json:"method"`
+	Amount float64 `json:"amount"`
+	Note   string  `json:"note"`
+	PaidAt string  `json:"paid_at"`
+}
+
+func getBillPaymentDetails(visitationID uint) ([]BillPaymentReport, error) {
+	var rows []struct {
+		Method string
+		Amount float64
+		Note   string
+		PaidAt time.Time
+	}
+	err := db.Db.Raw(`
+		SELECT method, amount, note, paid_at
+		FROM bill_payments
+		WHERE visitation_id = ?
+			AND deleted_at IS NULL
+			AND is_active = 1
+		ORDER BY id ASC
+	`, visitationID).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	reports := make([]BillPaymentReport, 0, len(rows))
+	for _, row := range rows {
+		reports = append(reports, BillPaymentReport{
+			Method: row.Method,
+			Amount: row.Amount,
+			Note:   row.Note,
+			PaidAt: row.PaidAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+	return reports, nil
 }

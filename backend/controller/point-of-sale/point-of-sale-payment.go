@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/rainza999/fiber-test/billing"
 	"github.com/rainza999/fiber-test/db"
 	"github.com/rainza999/fiber-test/inventory"
 	model "github.com/rainza999/fiber-test/models"
@@ -17,15 +18,17 @@ import (
 var (
 	errPaymentServicesStale  = errors.New("order items changed, reload before payment")
 	errVisitationAlreadyPaid = errors.New("visitation has already been paid")
+	errPaymentAmountMismatch = errors.New("payment amount changed, reload before payment")
+	errPaymentInsufficient   = errors.New("paid amount is less than net price")
 )
 
 func PaymentStore(c *fiber.Ctx) error {
-	var payment PaymentData
+	var payment paymentRequest
 	if err := c.BodyParser(&payment); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 	if payment.UUID == "" || payment.TotalCost == "" || payment.NetPrice == "" ||
-		payment.PaidAmount == "" || payment.EndTime == "" {
+		(payment.PaidAmount == "" && len(payment.Payments) == 0) || payment.EndTime == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Missing required payment field"})
 	}
 	if payment.TableType != 0 && payment.TableType != 1 {
@@ -40,12 +43,12 @@ func PaymentStore(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid net_price format"})
 	}
-	paidAmount, err := parseNonNegativeMoney(payment.PaidAmount)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid paid_amount format"})
-	}
-	if paidAmount < netPrice {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Paid amount is less than net price"})
+	legacyPaidAmount := 0.0
+	if payment.PaidAmount != "" {
+		legacyPaidAmount, err = parseNonNegativeMoney(payment.PaidAmount)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid paid_amount format"})
+		}
 	}
 	endTime, err := time.Parse(time.RFC3339, payment.EndTime)
 	if err != nil {
@@ -62,6 +65,7 @@ func PaymentStore(c *fiber.Ctx) error {
 	}
 
 	var visitation model.Visitation
+	var billPayments []model.BillPayment
 	err = inventory.WithTransaction(db.Db, func(tx *gorm.DB) error {
 		if err := tx.Where("uuid = ? AND is_active = 1", payment.UUID).First(&visitation).Error; err != nil {
 			return err
@@ -80,6 +84,18 @@ func PaymentStore(c *fiber.Ctx) error {
 
 		now := time.Now()
 		visitation.UseTime = elapsedVisitationSeconds(visitation, now)
+		computedTotalCost, computedNetPrice, gameSegments, err := computeVisitationPaymentTotals(tx, visitation, services, payment.TableType)
+		if err != nil {
+			return err
+		}
+		if math.Abs(netPrice-computedNetPrice) > 0.01 || math.Abs(totalCost-computedTotalCost) > 0.01 {
+			return errPaymentAmountMismatch
+		}
+		parsedPayments, appliedPaidAmount, changeAmount, err := payment.ToBillPayments(computedNetPrice, legacyPaidAmount, now)
+		if err != nil {
+			return err
+		}
+		billPayments = parsedPayments
 		if visitation.BillCode == "" {
 			billCode, err := nextBillCode(tx, visitation.DivisionID)
 			if err != nil {
@@ -87,10 +103,10 @@ func PaymentStore(c *fiber.Ctx) error {
 			}
 			visitation.BillCode = billCode
 		}
-		visitation.TotalCost = totalCost
-		visitation.NetPrice = netPrice
-		visitation.PaidAmount = paidAmount
-		visitation.ChangeAmount = paidAmount - netPrice
+		visitation.TotalCost = computedTotalCost
+		visitation.NetPrice = computedNetPrice
+		visitation.PaidAmount = appliedPaidAmount
+		visitation.ChangeAmount = changeAmount
 		visitation.IsPaid = payment.IsPaid
 		visitation.TableType = uint(payment.TableType)
 		visitation.EndTime = endTime.In(location)
@@ -102,31 +118,30 @@ func PaymentStore(c *fiber.Ctx) error {
 			updates := map[string]interface{}{"status": "paid"}
 			if service.ProductID == 1 {
 				updates["use_time"] = visitation.UseTime
-				if gameSnapshot, ok := requestedServices[service.ProductID]; ok {
-					gameTotal, err := parseNonNegativeMoney(gameSnapshot.TotalCost)
-					if err != nil {
-						return err
-					}
-					gameNet, err := parseNonNegativeMoney(gameSnapshot.NetPrice)
-					if err != nil {
-						return err
-					}
-					updates["sell_quantity"] = gameSnapshot.SellQuantity
-					updates["total_cost"] = gameTotal
-					updates["net_price"] = gameNet
-				}
+				updates["sell_quantity"] = float64(visitation.UseTime)
+				updates["total_cost"] = computedGameAmount(gameSegments)
+				updates["net_price"] = computedGameAmount(gameSegments)
 			}
 			if err := tx.Model(&model.Service{}).Where("id = ?", service.ID).Updates(updates).Error; err != nil {
 				return err
 			}
+		}
+		if err := billing.ReplaceBillPriceSegments(tx, visitation.ID, visitation.TableID, gameSegments); err != nil {
+			return err
+		}
+		if err := billing.ReplaceBillPayments(tx, visitation.ID, billPayments); err != nil {
+			return err
 		}
 		return nil
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Record not found"})
 	}
-	if errors.Is(err, errPaymentServicesStale) || errors.Is(err, errVisitationAlreadyPaid) {
+	if errors.Is(err, errPaymentServicesStale) || errors.Is(err, errVisitationAlreadyPaid) || errors.Is(err, errPaymentAmountMismatch) {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+	}
+	if errors.Is(err, billing.ErrInvalidPaymentMethod) || errors.Is(err, errPaymentInsufficient) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save payment"})
@@ -137,6 +152,47 @@ func PaymentStore(c *fiber.Ctx) error {
 		"relay":     publishPaidVisitationRelay(visitation, payment.IsPaid),
 		"message":   "PaymentStore updated successfully",
 		"bill_code": visitation.BillCode,
+	})
+}
+
+func PaymentQuote(c *fiber.Ctx) error {
+	uuid := c.Params("uuid")
+	tableTypeValue, err := strconv.Atoi(c.Query("table_type", "0"))
+	if err != nil || (tableTypeValue != 0 && tableTypeValue != 1) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "TableType must be 0 or 1"})
+	}
+
+	var visitation model.Visitation
+	if err := db.Db.Where("uuid = ? AND is_active = 1", uuid).First(&visitation).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Record not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load visitation"})
+	}
+	if visitation.IsPaid == 1 {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": errVisitationAlreadyPaid.Error()})
+	}
+
+	var services []model.Service
+	if err := db.Db.Where("visitation_id = ? AND deleted_at IS NULL", visitation.ID).Find(&services).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load services"})
+	}
+
+	visitation.UseTime = elapsedVisitationSeconds(visitation, time.Now())
+	totalCost, netPrice, gameSegments, err := computeVisitationPaymentTotals(db.Db, visitation, services, uint8(tableTypeValue))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to calculate payment quote"})
+	}
+
+	gameFee := computedGameAmount(gameSegments)
+	return c.JSON(fiber.Map{
+		"total_cost": totalCost,
+		"net_price":  netPrice,
+		"game_fee":   gameFee,
+		"order_fee":  roundMoney(netPrice - gameFee),
+		"use_time":   visitation.UseTime,
+		"table_type": tableTypeValue,
+		"segments":   gameSegments,
 	})
 }
 
@@ -228,4 +284,113 @@ func parseNonNegativeMoney(value string) (float64, error) {
 		return 0, errors.New("invalid money value")
 	}
 	return number, nil
+}
+
+type paymentRequest struct {
+	UUID       string        `json:"uuid"`
+	TotalCost  string        `json:"total_cost"`
+	NetPrice   string        `json:"net_price"`
+	IsPaid     uint8         `json:"is_paid"`
+	EndTime    string        `json:"end_time"`
+	PaidAmount string        `json:"paid_amount"`
+	TableType  uint8         `json:"table_type"`
+	Services   []ServiceData `json:"services"`
+	Payments   []paymentPart `json:"payments"`
+}
+
+type paymentPart struct {
+	Method string `json:"method"`
+	Amount string `json:"amount"`
+	Note   string `json:"note"`
+}
+
+func (payment paymentRequest) ToBillPayments(netPrice float64, legacyPaidAmount float64, paidAt time.Time) ([]model.BillPayment, float64, float64, error) {
+	if len(payment.Payments) == 0 {
+		if legacyPaidAmount < netPrice {
+			return nil, 0, 0, errPaymentInsufficient
+		}
+		return []model.BillPayment{{
+			Method:   billing.PaymentMethodCash,
+			Amount:   roundMoney(netPrice),
+			PaidAt:   paidAt,
+			IsActive: 1,
+		}}, roundMoney(legacyPaidAmount), roundMoney(legacyPaidAmount - netPrice), nil
+	}
+
+	payments := make([]model.BillPayment, 0, len(payment.Payments))
+	total := 0.0
+	for _, part := range payment.Payments {
+		if part.Method == "" || part.Amount == "" {
+			return nil, 0, 0, errors.New("Missing payment method or amount")
+		}
+		if err := billing.ValidatePaymentMethod(part.Method); err != nil {
+			return nil, 0, 0, err
+		}
+		amount, err := parseNonNegativeMoney(part.Amount)
+		if err != nil || amount <= 0 {
+			return nil, 0, 0, errors.New("Invalid payment amount")
+		}
+		amount = roundMoney(amount)
+		total += amount
+		payments = append(payments, model.BillPayment{
+			Method:   part.Method,
+			Amount:   amount,
+			Note:     part.Note,
+			PaidAt:   paidAt,
+			IsActive: 1,
+		})
+	}
+
+	total = roundMoney(total)
+	if math.Abs(total-netPrice) > 0.01 {
+		return nil, 0, 0, errPaymentAmountMismatch
+	}
+	return payments, total, 0, nil
+}
+
+func computeVisitationPaymentTotals(tx *gorm.DB, visitation model.Visitation, services []model.Service, tableType uint8) (float64, float64, []billing.PriceSegment, error) {
+	var table model.SettingTable
+	if err := tx.First(&table, visitation.TableID).Error; err != nil {
+		return 0, 0, nil, err
+	}
+
+	chargeStart := visitation.StartTime
+	chargeEnd := chargeStart.Add(time.Duration(visitation.UseTime) * time.Second)
+	if !chargeEnd.After(chargeStart) {
+		chargeEnd = chargeStart.Add(time.Second)
+	}
+	promotions, err := billing.LoadPromotionPrices(tx, visitation.TableID, chargeStart, chargeEnd)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	segments, gameAmount := billing.CalculateGameFeeSegments(chargeStart, visitation.UseTime, tableType, billing.TablePrice{
+		TableID:       visitation.TableID,
+		NormalPrice:   table.Price,
+		PracticePrice: table.Price2,
+	}, promotions)
+
+	totalCost := 0.0
+	netPrice := 0.0
+	for _, service := range services {
+		if service.ProductID == 1 {
+			totalCost += gameAmount
+			netPrice += gameAmount
+			continue
+		}
+		totalCost += service.TotalCost
+		netPrice += service.NetPrice
+	}
+	return roundMoney(totalCost), roundMoney(netPrice), segments, nil
+}
+
+func computedGameAmount(segments []billing.PriceSegment) float64 {
+	total := 0.0
+	for _, segment := range segments {
+		total += segment.Amount
+	}
+	return roundMoney(total)
+}
+
+func roundMoney(value float64) float64 {
+	return math.Round(value*100) / 100
 }
