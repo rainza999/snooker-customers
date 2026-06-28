@@ -304,29 +304,27 @@ func CalculateGameFeeSegments(startAt time.Time, timeInSeconds int64, tableType 
 		}}
 	}
 
-	remaining := chargeableSeconds
+	chargedSeconds := int64(0)
 	rawAmounts := make([]float64, 0, len(baseSegments)+1)
 	segments := make([]PriceSegment, 0, len(baseSegments)+1)
 	for _, segment := range baseSegments {
-		if remaining <= 0 {
-			break
-		}
 		duration := segment.SegmentEnd.Sub(segment.SegmentStart)
 		seconds := int64(math.Ceil(duration.Seconds()))
 		if seconds < 0 {
 			seconds = 0
 		}
-		used := minInt64(remaining, seconds)
-		if used == 0 {
+		if seconds == 0 {
 			continue
 		}
+		used := roundUpToMinuteSeconds(seconds)
 		segment.DurationSeconds = used
 		raw := float64(used) / 3600 * segment.UnitPrice
 		rawAmounts = append(rawAmounts, raw)
 		segments = append(segments, segment)
-		remaining -= used
+		chargedSeconds += used
 	}
 
+	remaining := chargeableSeconds - chargedSeconds
 	if remaining > 0 {
 		last := baseSegments[len(baseSegments)-1]
 		if len(segments) > 0 {
@@ -340,7 +338,7 @@ func CalculateGameFeeSegments(startAt time.Time, timeInSeconds int64, tableType 
 			DurationSeconds: remaining,
 			TableType:       tableType,
 			UnitPrice:       last.UnitPrice,
-			Source:          topupSegmentSource(timeInSeconds, chargeableSeconds),
+			Source:          SegmentSourceMinimumTopup,
 		}
 		rawAmounts = append(rawAmounts, float64(remaining)/3600*topup.UnitPrice)
 		segments = append(segments, topup)
@@ -533,12 +531,11 @@ func chargeableGameSeconds(timeInSeconds int64, isPractice bool) int64 {
 	return totalMinutes * 60
 }
 
-func topupSegmentSource(timeInSeconds int64, chargeableSeconds int64) string {
-	roundedActualSeconds := int64(math.Ceil(float64(maxInt64(timeInSeconds, 0))/60)) * 60
-	if chargeableSeconds > roundedActualSeconds {
-		return SegmentSourceMinimumTopup
+func roundUpToMinuteSeconds(seconds int64) int64 {
+	if seconds <= 0 {
+		return 0
 	}
-	return SegmentSourceRoundUp
+	return int64(math.Ceil(float64(seconds)/60)) * 60
 }
 
 func rateForType(tableType uint8, normalPrice float64, practicePrice float64) float64 {
