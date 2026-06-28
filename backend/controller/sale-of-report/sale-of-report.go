@@ -200,11 +200,18 @@ func GetDailySalesReportDetail(c *fiber.Ctx) error {
 			"error": "failed to load payment details",
 		})
 	}
+	priceSegments, err := getBillPriceSegmentDetails(visitation.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to load price details",
+		})
+	}
 
 	return c.JSON(fiber.Map{
 		"visitation":     visitation,
 		"serviceDetails": serviceDetails,
 		"payments":       paymentDetails,
+		"price_segments": priceSegments,
 	})
 }
 
@@ -640,11 +647,18 @@ func GetDailySalesCloseReportDetail(c *fiber.Ctx) error {
 			"error": "failed to load payment details",
 		})
 	}
+	priceSegments, err := getBillPriceSegmentDetails(visitation.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to load price details",
+		})
+	}
 
 	return c.JSON(fiber.Map{
 		"visitation":     visitation,
 		"serviceDetails": serviceDetails,
 		"payments":       paymentDetails,
+		"price_segments": priceSegments,
 	})
 }
 
@@ -789,6 +803,17 @@ type BillPaymentReport struct {
 	PaidAt string  `json:"paid_at"`
 }
 
+type BillPriceSegmentReport struct {
+	Source          string  `json:"source"`
+	PromotionName   string  `json:"promotion_name"`
+	SegmentStart    string  `json:"segment_start"`
+	SegmentEnd      string  `json:"segment_end"`
+	DurationSeconds int64   `json:"duration_seconds"`
+	TableType       uint8   `json:"table_type"`
+	UnitPrice       float64 `json:"unit_price"`
+	Amount          float64 `json:"amount"`
+}
+
 func getBillPaymentDetails(visitationID uint) ([]BillPaymentReport, error) {
 	var rows []struct {
 		Method string
@@ -815,6 +840,53 @@ func getBillPaymentDetails(visitationID uint) ([]BillPaymentReport, error) {
 			Amount: row.Amount,
 			Note:   row.Note,
 			PaidAt: row.PaidAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+	return reports, nil
+}
+
+func getBillPriceSegmentDetails(visitationID uint) ([]BillPriceSegmentReport, error) {
+	var rows []struct {
+		Source          string
+		PromotionName   string
+		SegmentStart    time.Time
+		SegmentEnd      time.Time
+		DurationSeconds int64
+		TableType       uint8
+		UnitPrice       float64
+		Amount          float64
+	}
+	err := db.Db.Raw(`
+		SELECT
+			bps.source,
+			COALESCE(p.name, '') AS promotion_name,
+			bps.segment_start,
+			bps.segment_end,
+			bps.duration_seconds,
+			bps.table_type,
+			bps.unit_price,
+			bps.amount
+		FROM bill_price_segments bps
+		LEFT JOIN promotions p ON p.id = bps.promotion_id
+		WHERE bps.visitation_id = ?
+			AND bps.deleted_at IS NULL
+		ORDER BY bps.segment_start ASC, bps.id ASC
+	`, visitationID).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	reports := make([]BillPriceSegmentReport, 0, len(rows))
+	for _, row := range rows {
+		reports = append(reports, BillPriceSegmentReport{
+			Source:          row.Source,
+			PromotionName:   row.PromotionName,
+			SegmentStart:    row.SegmentStart.Format("2006-01-02 15:04:05"),
+			SegmentEnd:      row.SegmentEnd.Format("2006-01-02 15:04:05"),
+			DurationSeconds: row.DurationSeconds,
+			TableType:       row.TableType,
+			UnitPrice:       row.UnitPrice,
+			Amount:          row.Amount,
 		})
 	}
 	return reports, nil

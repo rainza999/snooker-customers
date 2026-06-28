@@ -1,7 +1,7 @@
 # ---------- Build stage (Debian) ----------
 FROM golang:1.22-bookworm AS build
 WORKDIR /src
-ARG APP_VERSION=1.0.2
+ARG APP_VERSION=2.0.1
 ARG APP_GIT_COMMIT=unknown
 ARG APP_GIT_BRANCH=main
 ARG APP_DEPLOY_DATE=
@@ -19,7 +19,7 @@ FROM debian:bookworm-slim
 WORKDIR /app
 COPY --from=build /out/myapp /app/myapp
 COPY --from=build /src/release-notes.json /app/release-notes.json
-ARG APP_VERSION=1.0.2
+ARG APP_VERSION=2.0.1
 ARG APP_GIT_COMMIT=unknown
 ARG APP_GIT_BRANCH=main
 ARG APP_DEPLOY_DATE=

@@ -39,14 +39,15 @@ type ActivePromotionPrice struct {
 }
 
 type PriceSegment struct {
-	PromotionID     *uint
-	SegmentStart    time.Time
-	SegmentEnd      time.Time
-	DurationSeconds int64
-	TableType       uint8
-	UnitPrice       float64
-	Source          string
-	Amount          float64
+	PromotionID     *uint     `json:"promotion_id"`
+	PromotionName   string    `json:"promotion_name"`
+	SegmentStart    time.Time `json:"segment_start"`
+	SegmentEnd      time.Time `json:"segment_end"`
+	DurationSeconds int64     `json:"duration_seconds"`
+	TableType       uint8     `json:"table_type"`
+	UnitPrice       float64   `json:"unit_price"`
+	Source          string    `json:"source"`
+	Amount          float64   `json:"amount"`
 }
 
 func Migrate(database *gorm.DB) error {
@@ -332,6 +333,7 @@ func CalculateGameFeeSegments(startAt time.Time, timeInSeconds int64, tableType 
 		}
 		topup := PriceSegment{
 			PromotionID:     last.PromotionID,
+			PromotionName:   last.PromotionName,
 			SegmentStart:    actualEnd,
 			SegmentEnd:      actualEnd.Add(time.Duration(remaining) * time.Second),
 			DurationSeconds: remaining,
@@ -479,19 +481,22 @@ func splitByPromotion(startAt time.Time, endAt time.Time, tableType uint8, stand
 		promotion := activePromotionAt(midpoint, promotions)
 		source := SegmentSourceStandard
 		var promotionID *uint
+		promotionName := ""
 		unitPrice := rateForType(tableType, standard.NormalPrice, standard.PracticePrice)
 		if promotion != nil {
 			source = SegmentSourcePromotion
 			promotionID = &promotion.PromotionID
+			promotionName = promotion.Name
 			unitPrice = rateForType(tableType, promotion.NormalPrice, promotion.PracticePrice)
 		}
 		segments = append(segments, PriceSegment{
-			PromotionID:  promotionID,
-			SegmentStart: segmentStart,
-			SegmentEnd:   segmentEnd,
-			TableType:    tableType,
-			UnitPrice:    unitPrice,
-			Source:       source,
+			PromotionID:   promotionID,
+			PromotionName: promotionName,
+			SegmentStart:  segmentStart,
+			SegmentEnd:    segmentEnd,
+			TableType:     tableType,
+			UnitPrice:     unitPrice,
+			Source:        source,
 		})
 	}
 	return segments

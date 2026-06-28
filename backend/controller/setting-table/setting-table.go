@@ -25,8 +25,11 @@ func AnyData(c *fiber.Ctx) error {
 
 	fmt.Println("hello AnyData")
 	var lists []model.SettingTable
+	divisionID := currentUserDivisionID(c)
 
-	result := db.Db.Find(&lists)
+	result := db.Db.Where("division_id = ? AND is_active = 1", divisionID).
+		Order("id ASC").
+		Find(&lists)
 
 	if result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
@@ -55,21 +58,36 @@ func Store(c *fiber.Ctx) error {
 	}
 
 	fmt.Printf("Received JSON data: %+v\n", json)
+	divisionID := currentUserDivisionID(c)
 
 	var settingTable = model.SettingTable{
-		Code:    "xxx",
-		Name:    json.Name,
-		Ma:      1,
-		Type:    json.Type,
-		Status:  "active",
-		Price:   json.Price,
-		Price2:  json.Price2,
-		Relay:   json.Relay, // เพิ่ม relay ที่ได้รับจาก body
-		Address: json.Address,
+		DivisionID: divisionID,
+		Code:       "xxx",
+		Name:       json.Name,
+		Ma:         1,
+		Type:       json.Type,
+		Status:     "active",
+		Price:      json.Price,
+		Price2:     json.Price2,
+		Relay:      json.Relay, // เพิ่ม relay ที่ได้รับจาก body
+		Address:    json.Address,
 	}
 
 	db.Db.Create(&settingTable)
 	return c.JSON(fiber.Map{"message": "success"})
+}
+
+func currentUserDivisionID(c *fiber.Ctx) uint {
+	userID, ok := c.Locals("userID").(int)
+	if !ok || userID == 0 {
+		return 1
+	}
+
+	var user model.User
+	if err := db.Db.First(&user, userID).Error; err != nil || user.DivisionID == 0 {
+		return 1
+	}
+	return user.DivisionID
 }
 
 func Edit(c *fiber.Ctx) error {

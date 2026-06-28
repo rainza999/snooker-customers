@@ -30,7 +30,7 @@ type releaseNotesFile struct {
 var processStartedAt = time.Now()
 
 func Info(c *fiber.Ctx) error {
-	version := envOrDefault("APP_VERSION", "1.0.2")
+	version := envOrDefault("APP_VERSION", "2.0.1")
 	commit := envOrDefault("APP_GIT_COMMIT", "unknown")
 	branch := envOrDefault("APP_GIT_BRANCH", "main")
 	source := envOrDefault("APP_SOURCE", "server")
