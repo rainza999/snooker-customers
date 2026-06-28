@@ -109,6 +109,39 @@ func TestCalculateGameFeeSegmentsUsesLastRateForRegularMinimumTopup(t *testing.T
 	}
 }
 
+func TestCalculateGameFeeSegmentsDoesNotRoundEachPromotionBoundary(t *testing.T) {
+	start := mustTime(t, "2026-07-04 05:53:40")
+	promoStart := mustTime(t, "2026-07-04 00:00:00")
+	promoEnd := mustTime(t, "2026-07-04 07:00:00")
+
+	segments, total := CalculateGameFeeSegments(start, int64((7*time.Hour+46*time.Minute+20*time.Second)/time.Second), 0, TablePrice{
+		TableID:       1,
+		NormalPrice:   160,
+		PracticePrice: 100,
+	}, []ActivePromotionPrice{{
+		PromotionID:   7,
+		Name:          "Rain Test",
+		StartAt:       promoStart,
+		EndAt:         promoEnd,
+		NormalPrice:   100,
+		PracticePrice: 50,
+	}})
+
+	if len(segments) != 3 {
+		t.Fatalf("segments: got %d want 3: %#v", len(segments), segments)
+	}
+	if segments[0].Source != SegmentSourcePromotion || segments[0].DurationSeconds != int64((time.Hour+6*time.Minute+20*time.Second)/time.Second) {
+		t.Fatalf("promotion segment should use exact seconds: %#v", segments[0])
+	}
+	if segments[1].Source != SegmentSourceStandard || segments[1].DurationSeconds != int64((6*time.Hour+40*time.Minute)/time.Second) {
+		t.Fatalf("standard segment should not be rounded at promo boundary: %#v", segments[1])
+	}
+	if segments[2].Source != SegmentSourceRoundUp || segments[2].DurationSeconds != 40 {
+		t.Fatalf("last segment should be final minute round-up only: %#v", segments[2])
+	}
+	assertMoney(t, total, 1180)
+}
+
 func TestMigrateCanRunTwice(t *testing.T) {
 	database, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "billing.db")), &gorm.Config{})
 	if err != nil {

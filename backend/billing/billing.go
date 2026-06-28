@@ -18,6 +18,7 @@ const (
 	SegmentSourceStandard     = "standard"
 	SegmentSourcePromotion    = "promotion"
 	SegmentSourceMinimumTopup = "minimum_topup"
+	SegmentSourceRoundUp      = "round_up"
 )
 
 var ErrInvalidPaymentMethod = errors.New("invalid payment method")
@@ -339,7 +340,7 @@ func CalculateGameFeeSegments(startAt time.Time, timeInSeconds int64, tableType 
 			DurationSeconds: remaining,
 			TableType:       tableType,
 			UnitPrice:       last.UnitPrice,
-			Source:          SegmentSourceMinimumTopup,
+			Source:          topupSegmentSource(timeInSeconds, chargeableSeconds),
 		}
 		rawAmounts = append(rawAmounts, float64(remaining)/3600*topup.UnitPrice)
 		segments = append(segments, topup)
@@ -530,6 +531,14 @@ func chargeableGameSeconds(timeInSeconds int64, isPractice bool) int64 {
 		return 60 * 60
 	}
 	return totalMinutes * 60
+}
+
+func topupSegmentSource(timeInSeconds int64, chargeableSeconds int64) string {
+	roundedActualSeconds := int64(math.Ceil(float64(maxInt64(timeInSeconds, 0))/60)) * 60
+	if chargeableSeconds > roundedActualSeconds {
+		return SegmentSourceMinimumTopup
+	}
+	return SegmentSourceRoundUp
 }
 
 func rateForType(tableType uint8, normalPrice float64, practicePrice float64) float64 {
