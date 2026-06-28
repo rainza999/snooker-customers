@@ -169,6 +169,57 @@ func TestCalculateGameFeeSegmentsRoundsPartialSecondsPerPriceSegment(t *testing.
 	assertMoney(t, total, 1182)
 }
 
+func TestPausePeriodsTrackCompletedAndOpenDurations(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "pause.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatalf("raw db: %v", err)
+	}
+	defer sqlDB.Close()
+	if err := database.AutoMigrate(&model.Menu{}, &model.Permission{}, &model.Role{}, &model.RoleHasPermission{}, &model.Visitation{}); err != nil {
+		t.Fatalf("base migrate: %v", err)
+	}
+	if err := Migrate(database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	visitationID := uint(7)
+	firstPause := mustTime(t, "2026-07-04 10:00:00")
+	if err := StartPausePeriod(database, visitationID, firstPause); err != nil {
+		t.Fatalf("start first pause: %v", err)
+	}
+	if err := StartPausePeriod(database, visitationID, firstPause.Add(time.Minute)); err != nil {
+		t.Fatalf("duplicate open pause should be ignored: %v", err)
+	}
+	if err := FinishPausePeriod(database, visitationID, firstPause.Add(5*time.Minute)); err != nil {
+		t.Fatalf("finish first pause: %v", err)
+	}
+	secondPause := mustTime(t, "2026-07-04 10:10:00")
+	if err := StartPausePeriod(database, visitationID, secondPause); err != nil {
+		t.Fatalf("start second pause: %v", err)
+	}
+
+	periods, totalSeconds, err := LoadPausePeriods(database, visitationID, secondPause.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("load pause periods: %v", err)
+	}
+	if len(periods) != 2 {
+		t.Fatalf("pause periods: got %d want 2: %#v", len(periods), periods)
+	}
+	if periods[0].IsOpen || periods[0].DurationSeconds != int64((5*time.Minute).Seconds()) {
+		t.Fatalf("first pause should be completed for 5 minutes: %#v", periods[0])
+	}
+	if !periods[1].IsOpen || periods[1].DurationSeconds != int64((2*time.Minute).Seconds()) {
+		t.Fatalf("second pause should be open for 2 minutes: %#v", periods[1])
+	}
+	if totalSeconds != int64((7 * time.Minute).Seconds()) {
+		t.Fatalf("total pause seconds: got %d want %d", totalSeconds, int64((7 * time.Minute).Seconds()))
+	}
+}
+
 func TestMigrateCanRunTwice(t *testing.T) {
 	database, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "billing.db")), &gorm.Config{})
 	if err != nil {

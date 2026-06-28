@@ -51,6 +51,13 @@ type PriceSegment struct {
 	Amount          float64   `json:"amount"`
 }
 
+type PausePeriod struct {
+	PauseStart      time.Time  `json:"pause_start"`
+	PauseEnd        *time.Time `json:"pause_end"`
+	DurationSeconds int64      `json:"duration_seconds"`
+	IsOpen          bool       `json:"is_open"`
+}
+
 func Migrate(database *gorm.DB) error {
 	if err := migrateBillingTables(database); err != nil {
 		return err
@@ -63,6 +70,7 @@ func Migrate(database *gorm.DB) error {
 			WHERE deleted_at IS NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_bill_price_segments_visitation ON bill_price_segments(visitation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_bill_payments_visitation ON bill_payments(visitation_id, is_active)`,
+		`CREATE INDEX IF NOT EXISTS idx_visitation_pause_periods_visitation ON visitation_pause_periods(visitation_id, pause_start)`,
 	}
 	for _, statement := range statements {
 		if err := database.Exec(statement).Error; err != nil {
@@ -81,6 +89,7 @@ func migrateBillingTables(database *gorm.DB) error {
 		&model.PromotionTablePrice{},
 		&model.BillPriceSegment{},
 		&model.BillPayment{},
+		&model.VisitationPausePeriod{},
 	}
 	for _, table := range tables {
 		if database.Migrator().HasTable(table) {
@@ -91,6 +100,75 @@ func migrateBillingTables(database *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func StartPausePeriod(tx *gorm.DB, visitationID uint, pauseStart time.Time) error {
+	var openCount int64
+	if err := tx.Model(&model.VisitationPausePeriod{}).
+		Where("visitation_id = ? AND pause_end IS NULL AND deleted_at IS NULL", visitationID).
+		Count(&openCount).Error; err != nil {
+		return err
+	}
+	if openCount > 0 {
+		return nil
+	}
+	return tx.Create(&model.VisitationPausePeriod{
+		VisitationID: visitationID,
+		PauseStart:   pauseStart,
+	}).Error
+}
+
+func FinishPausePeriod(tx *gorm.DB, visitationID uint, pauseEnd time.Time) error {
+	var period model.VisitationPausePeriod
+	err := tx.Where("visitation_id = ? AND pause_end IS NULL AND deleted_at IS NULL", visitationID).
+		Order("pause_start DESC, id DESC").
+		First(&period).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	durationSeconds := int64(pauseEnd.Sub(period.PauseStart).Seconds())
+	if durationSeconds < 0 {
+		durationSeconds = 0
+	}
+	return tx.Model(&period).Updates(map[string]interface{}{
+		"pause_end":        pauseEnd,
+		"duration_seconds": durationSeconds,
+	}).Error
+}
+
+func LoadPausePeriods(tx *gorm.DB, visitationID uint, now time.Time) ([]PausePeriod, int64, error) {
+	var rows []model.VisitationPausePeriod
+	if err := tx.Where("visitation_id = ? AND deleted_at IS NULL", visitationID).
+		Order("pause_start ASC, id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	periods := make([]PausePeriod, 0, len(rows))
+	totalSeconds := int64(0)
+	for _, row := range rows {
+		durationSeconds := row.DurationSeconds
+		isOpen := row.PauseEnd == nil
+		if isOpen {
+			durationSeconds = int64(now.Sub(row.PauseStart).Seconds())
+		} else if durationSeconds <= 0 && row.PauseEnd.After(row.PauseStart) {
+			durationSeconds = int64(row.PauseEnd.Sub(row.PauseStart).Seconds())
+		}
+		if durationSeconds < 0 {
+			durationSeconds = 0
+		}
+		totalSeconds += durationSeconds
+		periods = append(periods, PausePeriod{
+			PauseStart:      row.PauseStart,
+			PauseEnd:        row.PauseEnd,
+			DurationSeconds: durationSeconds,
+			IsOpen:          isOpen,
+		})
+	}
+	return periods, totalSeconds, nil
 }
 
 type menuPermissionSeed struct {

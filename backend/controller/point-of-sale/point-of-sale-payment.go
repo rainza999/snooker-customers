@@ -132,6 +132,9 @@ func PaymentStore(c *fiber.Ctx) error {
 		if err := billing.ReplaceBillPayments(tx, visitation.ID, billPayments); err != nil {
 			return err
 		}
+		if err := billing.FinishPausePeriod(tx, visitation.ID, visitation.EndTime); err != nil {
+			return err
+		}
 		return nil
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -178,21 +181,29 @@ func PaymentQuote(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load services"})
 	}
 
-	visitation.UseTime = elapsedVisitationSeconds(visitation, time.Now())
+	now := time.Now()
+	visitation.UseTime = elapsedVisitationSeconds(visitation, now)
 	totalCost, netPrice, gameSegments, err := computeVisitationPaymentTotals(db.Db, visitation, services, uint8(tableTypeValue))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to calculate payment quote"})
 	}
+	pausePeriods, pauseLogTotalSeconds, err := billing.LoadPausePeriods(db.Db, visitation.ID, now)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load pause details"})
+	}
 
 	gameFee := computedGameAmount(gameSegments)
 	return c.JSON(fiber.Map{
-		"total_cost": totalCost,
-		"net_price":  netPrice,
-		"game_fee":   gameFee,
-		"order_fee":  roundMoney(netPrice - gameFee),
-		"use_time":   visitation.UseTime,
-		"table_type": tableTypeValue,
-		"segments":   gameSegments,
+		"total_cost":              totalCost,
+		"net_price":               netPrice,
+		"game_fee":                gameFee,
+		"order_fee":               roundMoney(netPrice - gameFee),
+		"use_time":                visitation.UseTime,
+		"table_type":              tableTypeValue,
+		"segments":                gameSegments,
+		"pause_periods":           pausePeriods,
+		"paused_duration":         visitation.PausedDuration,
+		"pause_log_total_seconds": pauseLogTotalSeconds,
 	})
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/rainza999/fiber-test/billing"
 	"github.com/rainza999/fiber-test/db"
 )
 
@@ -206,12 +207,19 @@ func GetDailySalesReportDetail(c *fiber.Ctx) error {
 			"error": "failed to load price details",
 		})
 	}
+	pausePeriods, _, err := billing.LoadPausePeriods(db.Db, visitation.ID, time.Now())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to load pause details",
+		})
+	}
 
 	return c.JSON(fiber.Map{
 		"visitation":     visitation,
 		"serviceDetails": serviceDetails,
 		"payments":       paymentDetails,
 		"price_segments": priceSegments,
+		"pause_periods":  pausePeriods,
 	})
 }
 
@@ -653,12 +661,19 @@ func GetDailySalesCloseReportDetail(c *fiber.Ctx) error {
 			"error": "failed to load price details",
 		})
 	}
+	pausePeriods, _, err := billing.LoadPausePeriods(db.Db, visitation.ID, time.Now())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to load pause details",
+		})
+	}
 
 	return c.JSON(fiber.Map{
 		"visitation":     visitation,
 		"serviceDetails": serviceDetails,
 		"payments":       paymentDetails,
 		"price_segments": priceSegments,
+		"pause_periods":  pausePeriods,
 	})
 }
 
