@@ -34,6 +34,7 @@ func setupPOSTestDB(t *testing.T) (uint, uint, uint) {
 		&model.Division{},
 		&model.User{},
 		&model.SettingTable{},
+		&model.Category{},
 		&model.Product{},
 		&model.Visitation{},
 		&model.Service{},
@@ -86,6 +87,7 @@ func newPOSTestApp(userID uint) *fiber.App {
 	})
 	app.Post("/point-of-sales/store/visitation", Store)
 	app.Put("/point-of-sales/:uuid/visitation/changeTable", ChangeTable)
+	app.Post("/point-of-sales/:uuid/visitation/order/store", OrderStore)
 	return app
 }
 
@@ -303,6 +305,51 @@ func TestEventsStreamsInitialSync(t *testing.T) {
 	}
 	if strings.TrimSpace(eventLine) != "event: pos-sync" {
 		t.Fatalf("unexpected event type: %q", eventLine)
+	}
+}
+
+func TestOrderStoreTreatsDuplicateQuantityAsSuccess(t *testing.T) {
+	userID, tableID, _ := setupPOSTestDB(t)
+	app := newPOSTestApp(userID)
+
+	if status, err := postOpenTable(app, tableID); err != nil || status != fiber.StatusOK {
+		t.Fatalf("open table: status=%d err=%v", status, err)
+	}
+
+	var visitation model.Visitation
+	if err := db.Db.Where("table_id = ? AND is_active = 1", tableID).First(&visitation).Error; err != nil {
+		t.Fatalf("find visitation: %v", err)
+	}
+
+	product := model.Product{Name: "Water", Unit: "bottle", Price: 10, IsActive: true}
+	if err := db.Db.Create(&product).Error; err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"product_id":%d,"quantity":1,"price":10}`, product.ID)
+	for index := 0; index < 2; index++ {
+		request := httptest.NewRequest(
+			"POST",
+			fmt.Sprintf("/point-of-sales/%s/visitation/order/store", visitation.Uuid),
+			bytes.NewBufferString(body),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := app.Test(request, -1)
+		if err != nil {
+			t.Fatalf("order request %d: %v", index+1, err)
+		}
+		defer response.Body.Close()
+		if response.StatusCode != fiber.StatusOK {
+			t.Fatalf("request %d expected 200, got %d", index+1, response.StatusCode)
+		}
+	}
+
+	var service model.Service
+	if err := db.Db.Where("visitation_id = ? AND product_id = ?", visitation.ID, product.ID).First(&service).Error; err != nil {
+		t.Fatalf("find service: %v", err)
+	}
+	if service.SellQuantity != 1 {
+		t.Fatalf("duplicate request changed quantity: got %.2f want 1", service.SellQuantity)
 	}
 }
 

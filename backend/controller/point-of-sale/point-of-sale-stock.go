@@ -94,6 +94,7 @@ func OrderStore(c *fiber.Ctx) error {
 
 		delta := order.Quantity - service.SellQuantity
 		if math.Abs(delta) < 0.000001 {
+			savedService = service
 			return errNoOrderChanges
 		}
 		if managed && math.Trunc(delta) != delta {
@@ -137,7 +138,13 @@ func OrderStore(c *fiber.Ctx) error {
 	if errors.Is(err, inventory.ErrInsufficientStock) {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Not enough stock"})
 	}
-	if errors.Is(err, errInvalidOrderQty) || errors.Is(err, errNoOrderChanges) {
+	if errors.Is(err, errNoOrderChanges) {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"message": "Order already up to date",
+			"service": savedService,
+		})
+	}
+	if errors.Is(err, errInvalidOrderQty) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	if errors.Is(err, errOrderAlreadyPaid) {
