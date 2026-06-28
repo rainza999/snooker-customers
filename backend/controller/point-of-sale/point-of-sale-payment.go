@@ -245,7 +245,7 @@ func elapsedVisitationSeconds(visitation model.Visitation, now time.Time) int64 
 		return 0
 	}
 	elapsed := now.Sub(visitation.StartTime).Seconds() - float64(visitation.PausedDuration)
-	if !visitation.PauseTime.IsZero() && visitation.PauseTime.Year() != 2000 {
+	if visitation.IsRunning == 0 && !visitation.PauseTime.IsZero() && visitation.PauseTime.Year() != 2000 {
 		elapsed = visitation.PauseTime.Sub(visitation.StartTime).Seconds() - float64(visitation.PausedDuration)
 	}
 	if elapsed < 0 {

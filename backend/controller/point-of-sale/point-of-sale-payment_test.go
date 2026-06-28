@@ -201,3 +201,34 @@ func TestPaymentStoreRejectsSplitPaymentsWhenTotalDoesNotMatchBill(t *testing.T)
 		t.Fatalf("payment status: got %d want 409", status)
 	}
 }
+
+func TestElapsedVisitationSecondsIgnoresPauseTimeWhileRunning(t *testing.T) {
+	start := time.Date(2026, 6, 28, 10, 0, 0, 0, time.FixedZone("ICT", 7*60*60))
+	now := start.Add(75 * time.Minute)
+	visitation := model.Visitation{
+		StartTime:      start,
+		PauseTime:      start,
+		PausedDuration: 0,
+		IsRunning:      1,
+	}
+
+	if got := elapsedVisitationSeconds(visitation, now); got != int64((75 * time.Minute).Seconds()) {
+		t.Fatalf("elapsed while running: got %d want %d", got, int64((75 * time.Minute).Seconds()))
+	}
+}
+
+func TestElapsedVisitationSecondsUsesPauseTimeWhenStopped(t *testing.T) {
+	start := time.Date(2026, 6, 28, 10, 0, 0, 0, time.FixedZone("ICT", 7*60*60))
+	now := start.Add(75 * time.Minute)
+	pause := start.Add(20 * time.Minute)
+	visitation := model.Visitation{
+		StartTime:      start,
+		PauseTime:      pause,
+		PausedDuration: 0,
+		IsRunning:      0,
+	}
+
+	if got := elapsedVisitationSeconds(visitation, now); got != int64((20 * time.Minute).Seconds()) {
+		t.Fatalf("elapsed while stopped: got %d want %d", got, int64((20 * time.Minute).Seconds()))
+	}
+}

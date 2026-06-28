@@ -41,8 +41,11 @@ func OrderStore(c *fiber.Ctx) error {
 	var savedService model.Service
 	event := "order-updated"
 	err := inventory.WithTransaction(db.Db, func(tx *gorm.DB) error {
-		if err := tx.Where("uuid = ? AND is_active = 1 AND is_paid <> 1", uuid).First(&visitation).Error; err != nil {
+		if err := tx.Where("uuid = ? AND is_active = 1", uuid).First(&visitation).Error; err != nil {
 			return err
+		}
+		if visitation.IsPaid == 1 {
+			return errOrderAlreadyPaid
 		}
 		if err := tx.First(&product, order.ProductID).Error; err != nil {
 			return err
