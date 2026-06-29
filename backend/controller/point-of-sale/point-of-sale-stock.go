@@ -3,6 +3,7 @@ package pointofsale
 import (
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -25,6 +26,7 @@ func OrderStore(c *fiber.Ctx) error {
 		ProductID    uint       `json:"product_id"`
 		Quantity     float64    `json:"quantity"`
 		Price        float64    `json:"price"`
+		Action       string     `json:"action"`
 		Status       *string    `json:"status"`
 		DeletedAt    *time.Time `json:"deleted_at"`
 	}
@@ -34,6 +36,13 @@ func OrderStore(c *fiber.Ctx) error {
 	if order.ProductID == 0 || math.IsNaN(order.Quantity) || math.IsInf(order.Quantity, 0) ||
 		math.IsNaN(order.Price) || math.IsInf(order.Price, 0) || order.Quantity < 0 || order.Price < 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid order quantity or price"})
+	}
+	action := normalizeOrderAction(order.Action)
+	if action == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid order action"})
+	}
+	if (action == "increment" || action == "decrement") && order.Quantity == 0 {
+		order.Quantity = 1
 	}
 
 	var visitation model.Visitation
@@ -64,22 +73,34 @@ func OrderStore(c *fiber.Ctx) error {
 			return findErr
 		}
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
-			if order.Quantity <= 0 {
+			if action == "delete" || action == "decrement" || order.Quantity <= 0 {
+				savedService = model.Service{
+					VisitationID: visitation.ID,
+					ProductID:    product.ID,
+					SellQuantity: 0,
+					TotalCost:    0,
+					NetPrice:     0,
+					Status:       "delete",
+				}
+				return errNoOrderChanges
+			}
+			targetQuantity := order.Quantity
+			if targetQuantity <= 0 {
 				return errInvalidOrderQty
 			}
 			service = model.Service{
 				VisitationID: visitation.ID,
 				ProductID:    product.ID,
-				SellQuantity: order.Quantity,
-				TotalCost:    order.Quantity * order.Price,
-				NetPrice:     order.Quantity * order.Price,
+				SellQuantity: targetQuantity,
+				TotalCost:    targetQuantity * order.Price,
+				NetPrice:     targetQuantity * order.Price,
 				UseTime:      visitation.UseTime,
 				Status:       "draft",
 			}
 			if err := tx.Create(&service).Error; err != nil {
 				return err
 			}
-			fifoCost, err := inventory.DeductFIFO(tx, product.ID, service.ID, visitation.ID, int(order.Quantity))
+			fifoCost, err := inventory.DeductFIFO(tx, product.ID, service.ID, visitation.ID, int(targetQuantity))
 			if err != nil {
 				return err
 			}
@@ -95,8 +116,22 @@ func OrderStore(c *fiber.Ctx) error {
 			return errOrderAlreadyPaid
 		}
 
-		delta := order.Quantity - service.SellQuantity
+		targetQuantity := order.Quantity
+		switch action {
+		case "increment":
+			targetQuantity = service.SellQuantity + order.Quantity
+		case "decrement":
+			targetQuantity = service.SellQuantity - order.Quantity
+			if targetQuantity < 0 {
+				targetQuantity = 0
+			}
+		case "delete":
+			targetQuantity = 0
+		}
+
+		delta := targetQuantity - service.SellQuantity
 		if math.Abs(delta) < 0.000001 {
+			savedService = service
 			return errNoOrderChanges
 		}
 		if managed && math.Trunc(delta) != delta {
@@ -119,10 +154,10 @@ func OrderStore(c *fiber.Ctx) error {
 			}
 		}
 
-		service.SellQuantity = order.Quantity
-		service.TotalCost = order.Quantity * order.Price
+		service.SellQuantity = targetQuantity
+		service.TotalCost = targetQuantity * order.Price
 		service.NetPrice = service.TotalCost
-		if order.Quantity == 0 || (order.Status != nil && *order.Status == "delete") {
+		if targetQuantity == 0 || action == "delete" || (order.Status != nil && *order.Status == "delete") {
 			service.Status = "delete"
 			service.DeletedAt = gorm.DeletedAt{Time: time.Now(), Valid: true}
 		} else if order.Status != nil {
@@ -140,7 +175,13 @@ func OrderStore(c *fiber.Ctx) error {
 	if errors.Is(err, inventory.ErrInsufficientStock) {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Not enough stock"})
 	}
-	if errors.Is(err, errInvalidOrderQty) || errors.Is(err, errNoOrderChanges) {
+	if errors.Is(err, errNoOrderChanges) {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"message": "Order already up to date",
+			"service": savedService,
+		})
+	}
+	if errors.Is(err, errInvalidOrderQty) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	if errors.Is(err, errOrderAlreadyPaid) {
@@ -155,6 +196,21 @@ func OrderStore(c *fiber.Ctx) error {
 		"message": "Order saved successfully",
 		"service": savedService,
 	})
+}
+
+func normalizeOrderAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "set", "update":
+		return "set"
+	case "increment", "add":
+		return "increment"
+	case "decrement", "subtract":
+		return "decrement"
+	case "delete", "remove":
+		return "delete"
+	default:
+		return ""
+	}
 }
 
 func CalculateFIFO(productID uint, quantity int, database *gorm.DB) (float64, error) {
