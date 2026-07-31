@@ -32,7 +32,8 @@ func GetMenusByRole(roleID uint) ([]Menu, error) {
 	// ดึง menu_id ที่ผู้ใช้มีสิทธิ์เข้าถึง
 	db.Db.Table("role_has_permissions").
 		Where("role_has_permissions.role_id", roleID).
-		Joins("JOIN permissions ON role_has_permissions.permission_id = permissions.id").
+		Joins("JOIN permissions ON role_has_permissions.permission_id = permissions.id AND permissions.is_active = ?", true).
+		Joins("JOIN menus ON permissions.menu_id = menus.id AND menus.is_active = ?", true).
 		Distinct("permissions.menu_id").
 		Pluck("permissions.menu_id", &menuIDs)
 
@@ -84,7 +85,8 @@ func GetMenuByRole(roleID int) interface{} {
 	// ดึง menu_id ที่ผู้ใช้มีสิทธิ์เข้าถึง
 	db.Db.Table("role_has_permissions").
 		Where("role_has_permissions.role_id", roleID).
-		Joins("JOIN permissions ON role_has_permissions.permission_id = permissions.id").
+		Joins("JOIN permissions ON role_has_permissions.permission_id = permissions.id AND permissions.is_active = ?", true).
+		Joins("JOIN menus ON permissions.menu_id = menus.id AND menus.is_active = ?", true).
 		Distinct("permissions.menu_id").
 		Pluck("permissions.menu_id", &menuIDs)
 

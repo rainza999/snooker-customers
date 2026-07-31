@@ -161,7 +161,8 @@ func verifyJWT(c *fiber.Ctx) error {
 	var permissions []string
 	if err := db.Db.Table("role_has_permissions").
 		Select("permissions.name").
-		Joins("LEFT JOIN permissions ON role_has_permissions.permission_id = permissions.id").
+		Joins("JOIN permissions ON role_has_permissions.permission_id = permissions.id AND permissions.is_active = ?", true).
+		Joins("JOIN menus ON permissions.menu_id = menus.id AND menus.is_active = ?", true).
 		Where("role_has_permissions.role_id = ?", user.RoleID).
 		Pluck("permissions.name", &permissions).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
