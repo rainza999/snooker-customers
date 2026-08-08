@@ -254,6 +254,7 @@ func publishTableRelay(table model.SettingTable, on bool, action string) fiber.M
 		result["ok"] = true
 		result["skipped"] = true
 		result["reason"] = "no relay mapped"
+		log.Printf("relay %s skipped: table_id=%d state=%s reason=no relay mapped", action, table.ID, state)
 		return result
 	}
 
@@ -261,6 +262,7 @@ func publishTableRelay(table model.SettingTable, on bool, action string) fiber.M
 		result["ok"] = true
 		result["skipped"] = true
 		result["reason"] = "mqtt relay not configured"
+		log.Printf("relay %s skipped: table_id=%d relay=%d state=%s reason=mqtt relay not configured", action, table.ID, table.Relay, state)
 		return result
 	}
 
@@ -272,6 +274,7 @@ func publishTableRelay(table model.SettingTable, on bool, action string) fiber.M
 	}
 
 	result["ok"] = true
+	log.Printf("relay %s published: table_id=%d relay=%d state=%s", action, table.ID, table.Relay, state)
 	return result
 }
 
@@ -1074,7 +1077,11 @@ func VerifyPassword(c *fiber.Ctx) error {
 
 	result := db.Db.Model(&model.Visitation{}).
 		Where("id = ? AND is_active = 1", visitation.ID).
-		Update("is_active", 0)
+		Updates(map[string]interface{}{
+			"is_active":  0,
+			"is_running": 0,
+			"end_time":   time.Now(),
+		})
 
 	if result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
@@ -1195,9 +1202,10 @@ func VerifyPasswordAndCloseTable(c *fiber.Ctx) error {
 	result := db.Db.Model(&model.Visitation{}).
 		Where("table_id = ? AND uuid = ? AND is_active = 1", request.TableID, request.UUIDTable).
 		Updates(map[string]interface{}{
-			"is_active": 0,
-			"end_time":  now, // ตั้งเวลาเลิก
-			"use_time":  visitation.UseTime,
+			"is_active":  0,
+			"is_running": 0,
+			"end_time":   now, // ตั้งเวลาเลิก
+			"use_time":   visitation.UseTime,
 		})
 
 		// 🟦 ดึงข้อมูล SettingTable เพื่อดูราคา

@@ -94,6 +94,10 @@ func PaymentStore(c *fiber.Ctx) error {
 		visitation.IsPaid = payment.IsPaid
 		visitation.TableType = uint(payment.TableType)
 		visitation.EndTime = endTime.In(location)
+		if payment.IsPaid == 1 {
+			visitation.IsActive = 0
+			visitation.IsRunning = 0
+		}
 		if err := tx.Save(&visitation).Error; err != nil {
 			return err
 		}

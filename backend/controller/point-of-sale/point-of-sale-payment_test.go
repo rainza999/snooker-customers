@@ -37,7 +37,7 @@ func setupPaymentTest(t *testing.T) (*fiber.App, model.Visitation, model.Service
 	if err := database.Create(&food).Error; err != nil {
 		t.Fatalf("create food product: %v", err)
 	}
-	visitation := model.Visitation{DivisionID: division.ID, StartTime: time.Now().Add(-time.Hour), IsActive: 1}
+	visitation := model.Visitation{DivisionID: division.ID, StartTime: time.Now().Add(-time.Hour), IsActive: 1, IsRunning: 1}
 	if err := database.Create(&visitation).Error; err != nil {
 		t.Fatalf("create visitation: %v", err)
 	}
@@ -117,5 +117,13 @@ func TestPaymentStoreMarksPersistedServicesPaidWithoutOverwritingQuantity(t *tes
 	}
 	if count != 2 {
 		t.Fatalf("service count: got %d want 2", count)
+	}
+
+	var paidVisitation model.Visitation
+	if err := db.Db.First(&paidVisitation, visitation.ID).Error; err != nil {
+		t.Fatalf("reload visitation: %v", err)
+	}
+	if paidVisitation.IsPaid != 1 || paidVisitation.IsActive != 0 || paidVisitation.IsRunning != 0 {
+		t.Fatalf("visitation should be paid and closed after payment: %#v", paidVisitation)
 	}
 }
