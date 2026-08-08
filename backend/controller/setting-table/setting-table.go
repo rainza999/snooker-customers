@@ -3,6 +3,7 @@ package settingtable
 import (
 	// "github.com/dgrijalva/jwt-go"
 	"fmt"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/rainza999/fiber-test/db"
@@ -45,12 +46,14 @@ func AnyData(c *fiber.Ctx) error {
 }
 
 type StoreBody struct {
-	Name    string  `json:"nameTable"`
-	Type    uint8   `json:"typeTable"`
-	Price   float64 `json:"price"`
-	Price2  float64 `json:"price2"`
-	Relay   uint8   `json:"relayNumber"` // เพิ่มฟิลด์ relay
-	Address string  `json:"address"`
+	Name          string  `json:"nameTable"`
+	Type          uint8   `json:"typeTable"`
+	Price         float64 `json:"price"`
+	Price2        float64 `json:"price2"`
+	Relay         uint8   `json:"relayNumber"` // เพิ่มฟิลด์ relay
+	Address       string  `json:"address"`
+	RelayDisabled bool    `json:"relayDisabled"`
+	NoRelay       bool    `json:"noRelay"`
 }
 
 func Store(c *fiber.Ctx) error {
@@ -77,6 +80,11 @@ func Store(c *fiber.Ctx) error {
 		Select("COALESCE(MAX(sort_order), 0)").
 		Scan(&maxSortOrder)
 
+	relay, address, err := normalizeRelayConfig(json.Relay, json.Address, json.RelayDisabled || json.NoRelay)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
 	var settingTable = model.SettingTable{
 		DivisionID: divisionID,
 		Code:       "xxx",
@@ -90,6 +98,9 @@ func Store(c *fiber.Ctx) error {
 		Address:    json.Address,
 		SortOrder:  maxSortOrder + 1,
 	}
+
+	settingTable.Relay = relay
+	settingTable.Address = address
 
 	db.Db.Create(&settingTable)
 	return c.JSON(fiber.Map{"message": "success"})
@@ -118,12 +129,15 @@ func Edit(c *fiber.Ctx) error {
 }
 
 type UpdateBody struct {
-	Name    string  `json:"nameTable"`
-	Type    uint8   `json:"typeTable"`
-	Price   float64 `json:"price"`
-	Price2  float64 `json:"price2"`
-	Relay   uint8   `json:"relay"`
-	Address string  `json:"address"`
+	Name          string  `json:"nameTable"`
+	Type          uint8   `json:"typeTable"`
+	Price         float64 `json:"price"`
+	Price2        float64 `json:"price2"`
+	Relay         uint8   `json:"relay"`
+	RelayNumber   uint8   `json:"relayNumber"`
+	Address       string  `json:"address"`
+	RelayDisabled bool    `json:"relayDisabled"`
+	NoRelay       bool    `json:"noRelay"`
 }
 
 func Update(c *fiber.Ctx) error {
@@ -154,6 +168,14 @@ func Update(c *fiber.Ctx) error {
 
 	price := json.Price
 	price2 := json.Price2
+	relay := json.Relay
+	if relay == 0 && json.RelayNumber > 0 {
+		relay = json.RelayNumber
+	}
+	relay, address, err := normalizeRelayConfig(relay, json.Address, json.RelayDisabled || json.NoRelay)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
 
 	// ค้นหา settingTable ตาม id
 	var settingTable model.SettingTable
@@ -172,8 +194,8 @@ func Update(c *fiber.Ctx) error {
 	settingTable.Type = json.Type
 	settingTable.Price = price
 	settingTable.Price2 = price2
-	settingTable.Relay = json.Relay
-	settingTable.Address = json.Address
+	settingTable.Relay = relay
+	settingTable.Address = address
 	if err := db.Db.Save(&settingTable).Error; err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error": "Internal server error",
@@ -190,6 +212,16 @@ type ReorderItem struct {
 
 type ReorderBody struct {
 	Items []ReorderItem `json:"items"`
+}
+
+func normalizeRelayConfig(relay uint8, address string, disabled bool) (uint8, string, error) {
+	if disabled || relay == 0 {
+		return 0, "", nil
+	}
+	if relay > 8 {
+		return 0, "", fmt.Errorf("relay number must be 1-8 or disabled")
+	}
+	return relay, strings.TrimSpace(address), nil
 }
 
 func currentUserDivisionID(c *fiber.Ctx) (uint, error) {
