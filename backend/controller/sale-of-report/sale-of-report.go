@@ -48,7 +48,7 @@ func GetDailySalesReport(c *fiber.Ctx) error {
 		Uuid         string    `json:"uuid"`
 	}
 	err := db.Db.Raw(`SELECT bill_code, start_time, end_time, net_price, total_cost, paid_amount, change_amount, table_id, uuid
-		FROM visitations WHERE (start_time BETWEEN ? AND ? ) and (is_paid = 1) and deleted_at is null and is_active = 1`, startDate, endDate).Scan(&visitations).Error
+		FROM visitations WHERE (start_time BETWEEN ? AND ? ) and (is_paid = 1) and deleted_at is null`, startDate, endDate).Scan(&visitations).Error
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
