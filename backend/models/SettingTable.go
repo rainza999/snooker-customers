@@ -21,4 +21,5 @@ type SettingTable struct {
 	IsActive    uint8 `gorm:"default:1"`
 	Relay       uint8
 	Address     string
+	SortOrder   int `gorm:"default:0;index" json:"sort_order"`
 }

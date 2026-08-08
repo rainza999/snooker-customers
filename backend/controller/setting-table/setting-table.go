@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/rainza999/fiber-test/db"
 	model "github.com/rainza999/fiber-test/models"
+	"github.com/rainza999/fiber-test/realtime"
 	"gorm.io/gorm"
 )
 
@@ -26,7 +27,16 @@ func AnyData(c *fiber.Ctx) error {
 	fmt.Println("hello AnyData")
 	var lists []model.SettingTable
 
-	result := db.Db.Find(&lists)
+	divisionID, err := currentUserDivisionID(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	result := db.Db.
+		Where("division_id = ?", divisionID).
+		Order("CASE WHEN sort_order IS NULL OR sort_order = 0 THEN id ELSE sort_order END ASC").
+		Order("id ASC").
+		Find(&lists)
 
 	if result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
@@ -56,16 +66,29 @@ func Store(c *fiber.Ctx) error {
 
 	fmt.Printf("Received JSON data: %+v\n", json)
 
+	divisionID, err := currentUserDivisionID(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	var maxSortOrder int
+	db.Db.Model(&model.SettingTable{}).
+		Where("division_id = ?", divisionID).
+		Select("COALESCE(MAX(sort_order), 0)").
+		Scan(&maxSortOrder)
+
 	var settingTable = model.SettingTable{
-		Code:    "xxx",
-		Name:    json.Name,
-		Ma:      1,
-		Type:    json.Type,
-		Status:  "active",
-		Price:   json.Price,
-		Price2:  json.Price2,
-		Relay:   json.Relay, // เพิ่ม relay ที่ได้รับจาก body
-		Address: json.Address,
+		DivisionID: divisionID,
+		Code:       "xxx",
+		Name:       json.Name,
+		Ma:         1,
+		Type:       json.Type,
+		Status:     "active",
+		Price:      json.Price,
+		Price2:     json.Price2,
+		Relay:      json.Relay, // เพิ่ม relay ที่ได้รับจาก body
+		Address:    json.Address,
+		SortOrder:  maxSortOrder + 1,
 	}
 
 	db.Db.Create(&settingTable)
@@ -76,7 +99,12 @@ func Edit(c *fiber.Ctx) error {
 	fmt.Println("hello Edit")
 	var settingTable model.SettingTable
 
-	result := db.Db.Where("id = ?", c.Params("id")).First(&settingTable)
+	divisionID, err := currentUserDivisionID(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	result := db.Db.Where("id = ? AND division_id = ?", c.Params("id"), divisionID).First(&settingTable)
 
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
@@ -129,7 +157,11 @@ func Update(c *fiber.Ctx) error {
 
 	// ค้นหา settingTable ตาม id
 	var settingTable model.SettingTable
-	if err := db.Db.Where("id = ?", c.Params("id")).First(&settingTable).Error; err != nil {
+	divisionID, err := currentUserDivisionID(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+	}
+	if err := db.Db.Where("id = ? AND division_id = ?", c.Params("id"), divisionID).First(&settingTable).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{
 			"error": "SettingTable not found",
 		})
@@ -147,6 +179,82 @@ func Update(c *fiber.Ctx) error {
 			"error": "Internal server error",
 		})
 	}
+
+	return c.JSON(fiber.Map{"message": "success"})
+}
+
+type ReorderItem struct {
+	ID        uint `json:"id"`
+	SortOrder int  `json:"sort_order"`
+}
+
+type ReorderBody struct {
+	Items []ReorderItem `json:"items"`
+}
+
+func currentUserDivisionID(c *fiber.Ctx) (uint, error) {
+	userID, ok := c.Locals("userID").(int)
+	if !ok {
+		return 0, fmt.Errorf("missing user context")
+	}
+
+	var user model.User
+	if err := db.Db.First(&user, userID).Error; err != nil {
+		return 0, err
+	}
+
+	return user.DivisionID, nil
+}
+
+func Reorder(c *fiber.Ctx) error {
+	var json ReorderBody
+
+	if err := c.BodyParser(&json); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+
+	if len(json.Items) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "No table order items provided"})
+	}
+
+	divisionID, err := currentUserDivisionID(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	seen := make(map[uint]struct{}, len(json.Items))
+	for i, item := range json.Items {
+		if item.ID == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid table id"})
+		}
+		if _, exists := seen[item.ID]; exists {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Duplicate table id"})
+		}
+		seen[item.ID] = struct{}{}
+		if json.Items[i].SortOrder <= 0 {
+			json.Items[i].SortOrder = i + 1
+		}
+	}
+
+	err = db.Db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range json.Items {
+			result := tx.Model(&model.SettingTable{}).
+				Where("id = ? AND division_id = ?", item.ID, divisionID).
+				Update("sort_order", item.SortOrder)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return fmt.Errorf("table id %d not found in current division", item.ID)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	realtime.PublishPOS(divisionID, "table-order-updated")
 
 	return c.JSON(fiber.Map{"message": "success"})
 }

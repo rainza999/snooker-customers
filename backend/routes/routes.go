@@ -727,6 +727,7 @@ func Setup(app *fiber.App) {
 	})
 	settingTableGroup.Get("/anyData", settingtable.AnyData)
 	settingTableGroup.Post("/store", settingtable.Store)
+	settingTableGroup.Put("/reorder", middleware.PermissionMiddleware("setting-table-edit"), settingtable.Reorder)
 	settingTableGroup.Get("/:id/edit", settingtable.Edit)
 	settingTableGroup.Put("/:id/update", settingtable.Update)
 	//Group routes /roles

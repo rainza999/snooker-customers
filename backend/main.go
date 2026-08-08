@@ -43,6 +43,9 @@ func main() {
 
 	db.InitDB()
 	db.Db.AutoMigrate(&model.SettingPointOfSale{})
+	if err := MigrateSettingTableOrder(db.Db); err != nil {
+		log.Fatalf("Failed to migrate setting table order schema: %v", err)
+	}
 	if err := inventory.Migrate(db.Db); err != nil {
 		log.Fatalf("Failed to migrate inventory integrity schema: %v", err)
 	}
@@ -599,6 +602,23 @@ func MigrateProduct(db *gorm.DB) {
 func MigrateSettingTable(db *gorm.DB) {
 	db.AutoMigrate(&model.SettingTable{})
 	fmt.Println("setting_tables table migrated successfully")
+}
+
+func MigrateSettingTableOrder(db *gorm.DB) error {
+	if err := db.AutoMigrate(&model.SettingTable{}); err != nil {
+		return err
+	}
+
+	if err := db.Exec(`
+		UPDATE setting_tables
+		SET sort_order = id
+		WHERE sort_order IS NULL OR sort_order = 0
+	`).Error; err != nil {
+		return err
+	}
+
+	fmt.Println("setting_tables sort_order migrated successfully")
+	return nil
 }
 
 func MigrateCompany(db *gorm.DB) {

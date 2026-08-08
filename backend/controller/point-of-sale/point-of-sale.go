@@ -175,6 +175,7 @@ func AnyData(c *fiber.Ctx) error {
         FROM setting_tables st
         LEFT JOIN visitations v ON st.id = v.table_id AND v.is_active = 1 AND (v.is_paid = 0 OR v.is_paid = 2) AND v.deleted_at IS NULL
 		 WHERE st.division_id = ? and v.deleted_at is null
+		 ORDER BY CASE WHEN st.sort_order IS NULL OR st.sort_order = 0 THEN st.id ELSE st.sort_order END ASC, st.id ASC
     
     `, divisionID).Scan(&tables)
 
