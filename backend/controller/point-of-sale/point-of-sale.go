@@ -174,7 +174,7 @@ func AnyData(c *fiber.Ctx) error {
 			v.id as visitation_id
         FROM setting_tables st
         LEFT JOIN visitations v ON st.id = v.table_id AND v.is_active = 1 AND (v.is_paid = 0 OR v.is_paid = 2) AND v.deleted_at IS NULL
-		 WHERE st.division_id = ? and v.deleted_at is null
+		 WHERE st.division_id = ? AND st.is_active = 1 AND st.deleted_at IS NULL and v.deleted_at is null
 		 ORDER BY CASE WHEN st.sort_order IS NULL OR st.sort_order = 0 THEN st.id ELSE st.sort_order END ASC, st.id ASC
     
     `, divisionID).Scan(&tables)
@@ -1721,6 +1721,9 @@ func ChangeTable(c *fiber.Ctx) error {
 		}
 		if destinationTable.DivisionID != visitation.DivisionID {
 			return errors.New("destination table is not in the same division")
+		}
+		if destinationTable.IsActive != 1 {
+			return errTableNotFound
 		}
 		if math.Abs(sourceTable.Price-destinationTable.Price) > 0.000001 ||
 			math.Abs(sourceTable.Price2-destinationTable.Price2) > 0.000001 {

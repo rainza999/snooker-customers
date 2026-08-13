@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net"
@@ -86,6 +87,7 @@ func newPOSTestApp(userID uint) *fiber.App {
 		return c.Next()
 	})
 	app.Post("/point-of-sales/store/visitation", Store)
+	app.Get("/point-of-sales/anyData", AnyData)
 	app.Put("/point-of-sales/:uuid/visitation/changeTable", ChangeTable)
 	app.Post("/point-of-sales/:uuid/visitation/order/store", OrderStore)
 	return app
@@ -148,6 +150,42 @@ func TestStoreRejectsConcurrentOpenForSameTable(t *testing.T) {
 	}
 	if activeCount != 1 {
 		t.Fatalf("expected one active visitation, got %d", activeCount)
+	}
+}
+
+func TestAnyDataOnlyReturnsActiveTables(t *testing.T) {
+	userID, tableID, _ := setupPOSTestDB(t)
+	app := newPOSTestApp(userID)
+
+	if err := db.Db.Model(&model.SettingTable{}).
+		Where("id <> ?", tableID).
+		Update("is_active", 0).Error; err != nil {
+		t.Fatalf("deactivate tables: %v", err)
+	}
+
+	request := httptest.NewRequest("GET", "/point-of-sales/anyData", nil)
+	response, err := app.Test(request, -1)
+	if err != nil {
+		t.Fatalf("list tables request: %v", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != fiber.StatusOK {
+		t.Fatalf("expected 200, got %d", response.StatusCode)
+	}
+
+	var payload []struct {
+		ID       uint  `json:"ID"`
+		IsActive uint8 `json:"IsActive"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload) != 1 {
+		t.Fatalf("expected only active table, got %#v", payload)
+	}
+	if payload[0].ID != tableID || payload[0].IsActive != 1 {
+		t.Fatalf("unexpected table payload: %#v", payload[0])
 	}
 }
 
@@ -251,6 +289,49 @@ func TestChangeTableRejectsDifferentTablePrice(t *testing.T) {
 
 	if response.StatusCode != fiber.StatusConflict {
 		t.Fatalf("expected 409, got %d", response.StatusCode)
+	}
+
+	var refreshedSource model.Visitation
+	if err := db.Db.First(&refreshedSource, source.ID).Error; err != nil {
+		t.Fatalf("reload source visitation: %v", err)
+	}
+	if refreshedSource.TableID != sourceTableID {
+		t.Fatalf("source table moved unexpectedly: got %d want %d", refreshedSource.TableID, sourceTableID)
+	}
+}
+
+func TestChangeTableRejectsInactiveDestination(t *testing.T) {
+	userID, sourceTableID, destinationTableID := setupPOSTestDB(t)
+	app := newPOSTestApp(userID)
+
+	if status, err := postOpenTable(app, sourceTableID); err != nil || status != fiber.StatusOK {
+		t.Fatalf("open source table: status=%d err=%v", status, err)
+	}
+	if err := db.Db.Model(&model.SettingTable{}).
+		Where("id = ?", destinationTableID).
+		Update("is_active", 0).Error; err != nil {
+		t.Fatalf("deactivate destination table: %v", err)
+	}
+
+	var source model.Visitation
+	if err := db.Db.Where("table_id = ? AND is_active = 1", sourceTableID).First(&source).Error; err != nil {
+		t.Fatalf("find source visitation: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		"PUT",
+		fmt.Sprintf("/point-of-sales/%s/visitation/changeTable", source.Uuid),
+		bytes.NewBufferString(fmt.Sprintf(`{"newTableID":%d}`, destinationTableID)),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := app.Test(request, -1)
+	if err != nil {
+		t.Fatalf("move table request: %v", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != fiber.StatusNotFound {
+		t.Fatalf("expected 404, got %d", response.StatusCode)
 	}
 
 	var refreshedSource model.Visitation
