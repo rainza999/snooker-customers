@@ -1,7 +1,6 @@
 package settingtable
 
 import (
-	// "github.com/dgrijalva/jwt-go"
 	"fmt"
 	"strings"
 
@@ -15,16 +14,10 @@ import (
 type UserBody struct {
 	ID       uint   `json:"id"`
 	Username string `json:"username"`
-	// Password string `json:"password"`
 	Fullname string `json:"fullname"`
 }
 
-// func (UserBody) TableName() string {
-// 	return "users"
-// }
-
 func AnyData(c *fiber.Ctx) error {
-
 	fmt.Println("hello AnyData")
 	var lists []model.SettingTable
 
@@ -34,7 +27,7 @@ func AnyData(c *fiber.Ctx) error {
 	}
 
 	result := db.Db.
-		Where("division_id = ?", divisionID).
+		Where("division_id = ? AND is_active = 1", divisionID).
 		Order("CASE WHEN sort_order IS NULL OR sort_order = 0 THEN id ELSE sort_order END ASC").
 		Order("id ASC").
 		Find(&lists)
@@ -50,7 +43,7 @@ type StoreBody struct {
 	Type          uint8   `json:"typeTable"`
 	Price         float64 `json:"price"`
 	Price2        float64 `json:"price2"`
-	Relay         uint8   `json:"relayNumber"` // เพิ่มฟิลด์ relay
+	Relay         uint8   `json:"relayNumber"`
 	Address       string  `json:"address"`
 	RelayDisabled bool    `json:"relayDisabled"`
 	NoRelay       bool    `json:"noRelay"`
@@ -60,11 +53,8 @@ func Store(c *fiber.Ctx) error {
 	fmt.Println("hello store")
 
 	var json StoreBody
-
 	if err := c.BodyParser(&json); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Invalid request body",
-		})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
 	fmt.Printf("Received JSON data: %+v\n", json)
@@ -75,34 +65,36 @@ func Store(c *fiber.Ctx) error {
 	}
 
 	var maxSortOrder int
-	db.Db.Model(&model.SettingTable{}).
+	if err := db.Db.Model(&model.SettingTable{}).
 		Where("division_id = ?", divisionID).
 		Select("COALESCE(MAX(sort_order), 0)").
-		Scan(&maxSortOrder)
+		Scan(&maxSortOrder).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
 
 	relay, address, err := normalizeRelayConfig(json.Relay, json.Address, json.RelayDisabled || json.NoRelay)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	var settingTable = model.SettingTable{
+	settingTable := model.SettingTable{
 		DivisionID: divisionID,
 		Code:       "xxx",
 		Name:       json.Name,
 		Ma:         1,
 		Type:       json.Type,
 		Status:     "active",
+		IsActive:   1,
 		Price:      json.Price,
 		Price2:     json.Price2,
-		Relay:      json.Relay, // เพิ่ม relay ที่ได้รับจาก body
-		Address:    json.Address,
+		Relay:      relay,
+		Address:    address,
 		SortOrder:  maxSortOrder + 1,
 	}
 
-	settingTable.Relay = relay
-	settingTable.Address = address
-
-	db.Db.Create(&settingTable)
+	if err := db.Db.Create(&settingTable).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
 	return c.JSON(fiber.Map{"message": "success"})
 }
 
@@ -116,7 +108,6 @@ func Edit(c *fiber.Ctx) error {
 	}
 
 	result := db.Db.Where("id = ? AND division_id = ?", c.Params("id"), divisionID).First(&settingTable)
-
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Setting table not found"})
@@ -124,7 +115,6 @@ func Edit(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": result.Error.Error()})
 	}
 
-	// ส่งข้อมูล settingTable กลับไป รวมถึง relay
 	return c.JSON(settingTable)
 }
 
@@ -146,28 +136,9 @@ func Update(c *fiber.Ctx) error {
 
 	if err := c.BodyParser(&json); err != nil {
 		fmt.Println("BodyParser Error:", err)
-		return c.Status(400).JSON(fiber.Map{
-			"error": "Invalid request body",
-		})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
-	// แปลง string เป็น float64
-	// price, err := strconv.ParseFloat(json.Price, 64)
-	// if err != nil {
-	// 	return c.Status(400).JSON(fiber.Map{
-	// 		"error": "Invalid price format",
-	// 	})
-	// }
-
-	// price2, err := strconv.ParseFloat(json.Price2, 64)
-	// if err != nil {
-	// 	return c.Status(400).JSON(fiber.Map{
-	// 		"error": "Invalid price2 format",
-	// 	})
-	// }
-
-	price := json.Price
-	price2 := json.Price2
 	relay := json.Relay
 	if relay == 0 && json.RelayNumber > 0 {
 		relay = json.RelayNumber
@@ -177,29 +148,23 @@ func Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// ค้นหา settingTable ตาม id
 	var settingTable model.SettingTable
 	divisionID, err := currentUserDivisionID(c)
 	if err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
 	}
 	if err := db.Db.Where("id = ? AND division_id = ?", c.Params("id"), divisionID).First(&settingTable).Error; err != nil {
-		return c.Status(404).JSON(fiber.Map{
-			"error": "SettingTable not found",
-		})
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "SettingTable not found"})
 	}
 
-	// อัปเดตข้อมูลใน settingTable
 	settingTable.Name = json.Name
 	settingTable.Type = json.Type
-	settingTable.Price = price
-	settingTable.Price2 = price2
+	settingTable.Price = json.Price
+	settingTable.Price2 = json.Price2
 	settingTable.Relay = relay
 	settingTable.Address = address
 	if err := db.Db.Save(&settingTable).Error; err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"error": "Internal server error",
-		})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 	}
 
 	return c.JSON(fiber.Map{"message": "success"})

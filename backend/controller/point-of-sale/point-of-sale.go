@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/rainza999/fiber-test/billing"
 	"github.com/rainza999/fiber-test/db"
 	model "github.com/rainza999/fiber-test/models"
 	"github.com/rainza999/fiber-test/realtime"
@@ -914,6 +915,7 @@ func UpdatePausedDurationTime(c *fiber.Ctx) error {
 		PauseTime      string `json:"pauseTime"`
 		ResumeTime     string `json:"resumeTime"`
 		UseTime        int64  `json:"useTime"`
+		Reason         string `json:"reason"`
 	}
 
 	if err := c.BodyParser(&request); err != nil {
@@ -922,65 +924,86 @@ func UpdatePausedDurationTime(c *fiber.Ctx) error {
 		})
 	}
 
-	var visitation model.Visitation
-	if err := db.Db.Where("uuid = ?", request.UUID).First(&visitation).Error; err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Visitation not found",
-		})
-	}
-
 	sentinelPauseTime := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	var pauseTime time.Time
+	var resumeTime time.Time
 
 	switch request.Action {
 	case "pause":
-		pauseTime, err := time.Parse(time.RFC3339, request.PauseTime)
+		parsedPauseTime, err := time.Parse(time.RFC3339, request.PauseTime)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "Invalid pauseTime format",
 			})
 		}
-
-		visitation.IsRunning = 0
-		visitation.PauseTime = pauseTime
-
-		// เก็บ use time จริงตอนกด pause/check bill
-		if request.UseTime >= 0 {
-			visitation.UseTime = request.UseTime
-		}
-
-		// อย่าไป reset pausedDuration ทิ้ง
-		if request.PausedDuration >= 0 {
-			visitation.PausedDuration = request.PausedDuration
-		}
-
+		pauseTime = parsedPauseTime
 	case "resume":
-		resumeTime, err := time.Parse(time.RFC3339, request.ResumeTime)
+		parsedResumeTime, err := time.Parse(time.RFC3339, request.ResumeTime)
 		if err != nil {
-			resumeTime = time.Now()
+			parsedResumeTime = time.Now()
 		}
-
-		// คิด paused duration เฉพาะตอนที่มัน pause อยู่จริงเท่านั้น
-		if visitation.IsRunning == 0 &&
-			!visitation.PauseTime.IsZero() &&
-			visitation.PauseTime.After(sentinelPauseTime) {
-
-			pausedGap := int64(resumeTime.Sub(visitation.PauseTime).Seconds())
-			if pausedGap < 0 {
-				pausedGap = 0
-			}
-			visitation.PausedDuration += pausedGap
-		}
-
-		visitation.IsRunning = 1
-		visitation.PauseTime = sentinelPauseTime
-
+		resumeTime = parsedResumeTime
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid action",
 		})
 	}
 
-	if err := db.Db.Save(&visitation).Error; err != nil {
+	var visitation model.Visitation
+	if err := db.Db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("uuid = ?", request.UUID).First(&visitation).Error; err != nil {
+			return err
+		}
+
+		switch request.Action {
+		case "pause":
+			visitation.IsRunning = 0
+			visitation.PauseTime = pauseTime
+
+			// เก็บ use time จริงตอนกด pause/check bill
+			if request.UseTime >= 0 {
+				visitation.UseTime = request.UseTime
+			}
+
+			// อย่าไป reset pausedDuration ทิ้ง
+			if request.PausedDuration >= 0 {
+				visitation.PausedDuration = request.PausedDuration
+			}
+
+			if request.Reason != "billing" {
+				if err := billing.StartPausePeriod(tx, visitation.ID, pauseTime); err != nil {
+					return err
+				}
+			}
+
+		case "resume":
+			// คิด paused duration เฉพาะตอนที่มัน pause อยู่จริงเท่านั้น
+			if visitation.IsRunning == 0 &&
+				!visitation.PauseTime.IsZero() &&
+				visitation.PauseTime.After(sentinelPauseTime) {
+
+				pausedGap := int64(resumeTime.Sub(visitation.PauseTime).Seconds())
+				if pausedGap < 0 {
+					pausedGap = 0
+				}
+				visitation.PausedDuration += pausedGap
+			}
+
+			visitation.IsRunning = 1
+			visitation.PauseTime = sentinelPauseTime
+
+			if err := billing.FinishPausePeriod(tx, visitation.ID, resumeTime); err != nil {
+				return err
+			}
+		}
+
+		return tx.Save(&visitation).Error
+	}); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Visitation not found",
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to update visitation",
 		})

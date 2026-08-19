@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/rainza999/fiber-test/billing"
 	"github.com/rainza999/fiber-test/db"
 	model "github.com/rainza999/fiber-test/models"
 	"gorm.io/driver/sqlite"
@@ -41,6 +42,9 @@ func setupPOSTestDB(t *testing.T) (uint, uint, uint) {
 		&model.Service{},
 	); err != nil {
 		t.Fatalf("migrate test db: %v", err)
+	}
+	if err := billing.Migrate(testDB); err != nil {
+		t.Fatalf("migrate billing test db: %v", err)
 	}
 
 	division := model.Division{Code: "01", MaxDigits: "000000", Name: "Test", IsActive: 1}
@@ -88,6 +92,7 @@ func newPOSTestApp(userID uint) *fiber.App {
 	})
 	app.Post("/point-of-sales/store/visitation", Store)
 	app.Get("/point-of-sales/anyData", AnyData)
+	app.Post("/point-of-sales/api/updatePausedDurationTime", UpdatePausedDurationTime)
 	app.Put("/point-of-sales/:uuid/visitation/changeTable", ChangeTable)
 	app.Post("/point-of-sales/:uuid/visitation/order/store", OrderStore)
 	return app
@@ -106,6 +111,98 @@ func postOpenTable(app *fiber.App, tableID uint) (int, error) {
 	}
 	defer response.Body.Close()
 	return response.StatusCode, nil
+}
+
+func postPauseAction(t *testing.T, app *fiber.App, body string) int {
+	t.Helper()
+	request := httptest.NewRequest(
+		"POST",
+		"/point-of-sales/api/updatePausedDurationTime",
+		bytes.NewBufferString(body),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := app.Test(request, -1)
+	if err != nil {
+		t.Fatalf("pause request: %v", err)
+	}
+	defer response.Body.Close()
+	return response.StatusCode
+}
+
+func TestPauseHistoryIgnoresBillingPauseAndTracksManualPause(t *testing.T) {
+	userID, tableID, _ := setupPOSTestDB(t)
+	app := newPOSTestApp(userID)
+
+	if status, err := postOpenTable(app, tableID); err != nil || status != fiber.StatusOK {
+		t.Fatalf("open table: status=%d err=%v", status, err)
+	}
+	var visitation model.Visitation
+	if err := db.Db.Where("table_id = ? AND is_active = 1", tableID).First(&visitation).Error; err != nil {
+		t.Fatalf("find visitation: %v", err)
+	}
+	start := time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC)
+	if err := db.Db.Model(&visitation).Updates(map[string]interface{}{
+		"start_time": start,
+		"is_running": 1,
+	}).Error; err != nil {
+		t.Fatalf("prepare visitation: %v", err)
+	}
+
+	billingPause := start.Add(10 * time.Minute)
+	status := postPauseAction(t, app, fmt.Sprintf(`{
+		"uuid":%q,
+		"action":"pause",
+		"pauseTime":%q,
+		"pausedDuration":0,
+		"useTime":600,
+		"reason":"billing"
+	}`, visitation.Uuid, billingPause.Format(time.RFC3339)))
+	if status != fiber.StatusOK {
+		t.Fatalf("billing pause status: got %d want 200", status)
+	}
+	var count int64
+	if err := db.Db.Model(&model.VisitationPausePeriod{}).Where("visitation_id = ?", visitation.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count pause periods after billing pause: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("billing pause should not create pause history, got %d rows", count)
+	}
+
+	manualPause := start.Add(20 * time.Minute)
+	if err := db.Db.Model(&visitation).Updates(map[string]interface{}{
+		"is_running":      1,
+		"pause_time":      time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
+		"paused_duration": 0,
+	}).Error; err != nil {
+		t.Fatalf("reset visitation for manual pause: %v", err)
+	}
+	status = postPauseAction(t, app, fmt.Sprintf(`{
+		"uuid":%q,
+		"action":"pause",
+		"pauseTime":%q,
+		"pausedDuration":0,
+		"useTime":1200,
+		"reason":"manual"
+	}`, visitation.Uuid, manualPause.Format(time.RFC3339)))
+	if status != fiber.StatusOK {
+		t.Fatalf("manual pause status: got %d want 200", status)
+	}
+	status = postPauseAction(t, app, fmt.Sprintf(`{
+		"uuid":%q,
+		"action":"resume",
+		"resumeTime":%q
+	}`, visitation.Uuid, manualPause.Add(5*time.Minute).Format(time.RFC3339)))
+	if status != fiber.StatusOK {
+		t.Fatalf("resume status: got %d want 200", status)
+	}
+
+	var period model.VisitationPausePeriod
+	if err := db.Db.Where("visitation_id = ?", visitation.ID).First(&period).Error; err != nil {
+		t.Fatalf("load manual pause period: %v", err)
+	}
+	if period.PauseEnd == nil || period.DurationSeconds != int64((5*time.Minute).Seconds()) {
+		t.Fatalf("manual pause period not closed correctly: %#v", period)
+	}
 }
 
 func TestStoreRejectsConcurrentOpenForSameTable(t *testing.T) {

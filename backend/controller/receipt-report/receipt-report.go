@@ -48,7 +48,7 @@ func AnyData(c *fiber.Ctx) error {
 	}
 
 	// คำนวณยอดรวมของ ProductItems สำหรับแต่ละใบเสร็จ
-	var resultList []ProductReceiptWithTotal
+	resultList := make([]ProductReceiptWithTotal, 0, len(lists))
 	for _, receipt := range lists {
 		var sumTotalPrice float64
 		for _, item := range receipt.ProductItems {
