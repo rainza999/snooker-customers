@@ -179,6 +179,16 @@ func validateDateRange(startDate, endDate string) error {
 	return nil
 }
 
+func monthDateRange(selectedMonth string) (string, string, error) {
+	startOfMonth, err := time.Parse("2006-01", selectedMonth)
+	if err != nil {
+		return "", "", errors.New("รูปแบบเดือนที่เลือกไม่ถูกต้อง")
+	}
+	return startOfMonth.Format("2006-01-02 15:04:05"),
+		startOfMonth.AddDate(0, 1, 0).Format("2006-01-02 15:04:05"),
+		nil
+}
+
 // ฟังก์ชันสมมุติสำหรับดึงชื่อโต๊ะจาก TableID
 func getTableName(tableID uint) string {
 	var tableName string
@@ -462,11 +472,12 @@ func GetDailySalesCloseReport(c *fiber.Ctx) error {
 	LEFT JOIN services s 
 		ON v.id = s.visitation_id 
 		AND s.deleted_at IS NULL 
-		AND (s.status = 'paid' OR s.status = 'draft')
+		AND s.status = 'draft'
 	WHERE 
 		v.start_time BETWEEN ? AND ?
 		AND v.deleted_at IS NULL
 		AND v.is_active = 0
+		AND v.is_paid = 0
 	GROUP BY 
 		v.id, v.bill_code, v.start_time, v.end_time, v.paid_amount, 
 		v.change_amount, v.table_id, v.uuid
@@ -535,10 +546,19 @@ func GetDailySalesCloseReportDetail(c *fiber.Ctx) error {
 	use_time
 
 
-		FROM visitations left join setting_tables on visitations.table_id = setting_tables.id WHERE uuid = ?`, uuid).Scan(&visitation).Error
+		FROM visitations left join setting_tables on visitations.table_id = setting_tables.id
+		WHERE uuid = ?
+		  AND visitations.deleted_at IS NULL
+		  AND visitations.is_active = 0
+		  AND visitations.is_paid = 0`, uuid).Scan(&visitation).Error
 
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "ไม่พบข้อมูลรายละเอียดของรายงาน",
+		})
+	}
+	if visitation.ID == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "ไม่พบข้อมูลรายละเอียดของรายงาน",
 		})
 	}
@@ -564,7 +584,7 @@ func GetDailySalesCloseReportDetail(c *fiber.Ctx) error {
 	WHERE 
 		services.visitation_id = ? 
 		AND services.deleted_at IS NULL 
-		AND (services.status = 'paid' OR services.status = 'draft')
+		AND services.status = 'draft'
 `, visitation.ID).Scan(&serviceDetails).Error
 
 	if err != nil {
@@ -612,6 +632,8 @@ JOIN products p ON p.id = s.product_id
 WHERE 
   s.deleted_at IS NULL
   and v.deleted_at is null
+  AND v.is_active = 0
+  AND v.is_paid = 0
   AND s.status = 'draft'
   AND v.start_time >= ?
   AND v.start_time < ?
@@ -619,9 +641,12 @@ GROUP BY DATE(datetime(v.start_time, '+7 hours'))
 ORDER BY DATE(datetime(v.start_time, '+7 hours'));
 `
 
-	// แปลง selectedMonth ที่เป็น "YYYY-MM" เพื่อกำหนดช่วงวันที่
-	startOfMonth := selectedMonth + "-01"
-	endOfMonth := selectedMonth + "-31"
+	startOfMonth, endOfMonth, err := monthDateRange(selectedMonth)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
 
 	// ส่งค่า startOfMonth และ endOfMonth แทน DATE_FORMAT
 	if err := db.Db.Raw(query, startOfMonth, endOfMonth).Scan(&report).Error; err != nil {

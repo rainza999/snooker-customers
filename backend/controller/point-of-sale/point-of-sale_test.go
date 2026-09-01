@@ -19,6 +19,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/rainza999/fiber-test/db"
 	model "github.com/rainza999/fiber-test/models"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -108,6 +109,34 @@ func postOpenTable(app *fiber.App, tableID uint) (int, error) {
 	return response.StatusCode, nil
 }
 
+func createCloseTableUser(t *testing.T, password string) model.Employee {
+	t.Helper()
+
+	var division model.Division
+	if err := db.Db.First(&division).Error; err != nil {
+		t.Fatalf("find division: %v", err)
+	}
+	employee := model.Employee{FirstName: "Closer", LastName: "User", IsActive: 1}
+	if err := db.Db.Create(&employee).Error; err != nil {
+		t.Fatalf("create employee: %v", err)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	user := model.User{
+		EmployeeID: employee.ID,
+		DivisionID: division.ID,
+		Username:   "closer",
+		Password:   string(hash),
+		IsActive:   1,
+	}
+	if err := db.Db.Create(&user).Error; err != nil {
+		t.Fatalf("create close table user: %v", err)
+	}
+	return employee
+}
+
 func TestStoreRejectsConcurrentOpenForSameTable(t *testing.T) {
 	userID, tableID, _ := setupPOSTestDB(t)
 	app := newPOSTestApp(userID)
@@ -150,6 +179,68 @@ func TestStoreRejectsConcurrentOpenForSameTable(t *testing.T) {
 	}
 	if activeCount != 1 {
 		t.Fatalf("expected one active visitation, got %d", activeCount)
+	}
+}
+
+func TestVerifyPasswordAndCloseTableLeavesUnpaidClosedDraftData(t *testing.T) {
+	userID, tableID, _ := setupPOSTestDB(t)
+	app := newPOSTestApp(userID)
+	app.Post("/point-of-sales/api/verify-password-and-close-table", VerifyPasswordAndCloseTable)
+	employee := createCloseTableUser(t, "1234")
+
+	if status, err := postOpenTable(app, tableID); err != nil || status != fiber.StatusOK {
+		t.Fatalf("open table: status=%d err=%v", status, err)
+	}
+
+	var opened model.Visitation
+	if err := db.Db.Where("table_id = ? AND is_active = 1", tableID).First(&opened).Error; err != nil {
+		t.Fatalf("find opened visitation: %v", err)
+	}
+
+	body := fmt.Sprintf(`{
+		"uuidTable":%q,
+		"uuid":%q,
+		"password":"1234",
+		"tableID":%d
+	}`, opened.Uuid, employee.Uuid, tableID)
+	request := httptest.NewRequest(
+		"POST",
+		"/point-of-sales/api/verify-password-and-close-table",
+		bytes.NewBufferString(body),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := app.Test(request, -1)
+	if err != nil {
+		t.Fatalf("close table request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != fiber.StatusOK {
+		t.Fatalf("close table status: got %d want %d", response.StatusCode, fiber.StatusOK)
+	}
+
+	var closed model.Visitation
+	if err := db.Db.First(&closed, opened.ID).Error; err != nil {
+		t.Fatalf("reload closed visitation: %v", err)
+	}
+	var gameService model.Service
+	if err := db.Db.Where("visitation_id = ? AND product_id = 1", closed.ID).First(&gameService).Error; err != nil {
+		t.Fatalf("find game service: %v", err)
+	}
+
+	t.Logf("closed via UI endpoint: visitation_id=%d is_active=%d is_paid=%d is_running=%d use_time=%d bill_code=%q service_status=%q service_net_price=%.2f",
+		closed.ID, closed.IsActive, closed.IsPaid, closed.IsRunning, closed.UseTime, closed.BillCode, gameService.Status, gameService.NetPrice)
+
+	if closed.IsActive != 0 {
+		t.Fatalf("is_active after close table: got %d want 0", closed.IsActive)
+	}
+	if closed.IsPaid != 0 {
+		t.Fatalf("is_paid after close table: got %d want 0", closed.IsPaid)
+	}
+	if closed.IsRunning != 0 {
+		t.Fatalf("is_running after close table: got %d want 0", closed.IsRunning)
+	}
+	if gameService.Status != "draft" {
+		t.Fatalf("game service status after close table: got %q want draft", gameService.Status)
 	}
 }
 
